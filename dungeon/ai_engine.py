@@ -15,6 +15,7 @@ from .memory import (
     retrieve_relevant_memories,
     save_memory_bank,
 )
+from .story_cards import format_all_cards_for_summary, format_story_cards_block, retrieve_relevant_cards
 from .storage import save_history
 from .text_utils import clean_dm_response, clean_stream_chunk
 from .tokens import count_tokens
@@ -23,6 +24,8 @@ from .tokens import count_tokens
 class AIEngineMixin:
     def run_memory_indexing(self, force=False):
         if self.memory_indexing:
+            return
+        if not self.memory_enabled and not force:
             return
         self.memory_indexing = True
         try:
@@ -133,12 +136,20 @@ class AIEngineMixin:
                 preview_tokens += msg_tokens
             retrieval_query = user_content + "\n" + "\n".join(preview_msgs)
 
-            relevant_memories = retrieve_relevant_memories(
-                retrieval_query, self.memory_bank, top_k=self.memory_top_k
+            if self.memory_enabled:
+                relevant_memories = retrieve_relevant_memories(
+                    retrieval_query, self.memory_bank, top_k=self.memory_top_k
+                )
+                memory_block = format_memory_block(relevant_memories)
+                if memory_block:
+                    context += memory_block
+
+            relevant_cards = retrieve_relevant_cards(
+                retrieval_query, self.story_cards, top_k=self.memory_top_k
             )
-            memory_block = format_memory_block(relevant_memories)
-            if memory_block:
-                context += memory_block
+            cards_block = format_story_cards_block(relevant_cards)
+            if cards_block:
+                context += cards_block
 
             system_base_text = f"{context}\nИСТОРИЯ ТЕКУЩЕЙ ИГРОВОЙ СЕССИИ:\n"
             static_tokens = count_tokens(system_base_text)
@@ -246,12 +257,12 @@ class AIEngineMixin:
                 ),
             )
 
-            if self.turns_since_summary >= self.summary_interval:
+            if self.summary_enabled and self.turns_since_summary >= self.summary_interval:
                 self.turns_since_summary = 0
                 self.root.after(0, lambda: self.add_system_message("📝 ИИ пересматривает хронологию..."))
                 Thread(target=self.generate_global_summary, daemon=True).start()
 
-            if self.turns_since_memory >= self.memory_interval:
+            if self.memory_enabled and self.turns_since_memory >= self.memory_interval:
                 self.turns_since_memory = 0
                 self.root.after(0, self.update_memory_label)
                 Thread(target=self.run_memory_indexing, daemon=True).start()
@@ -274,24 +285,19 @@ class AIEngineMixin:
                 summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else "Отсутствует."
             )
 
-            characters_path = self.current_world_path / "characters.txt"
-            characters_content = (
-                characters_path.read_text(encoding="utf-8").strip()
-                if characters_path.exists()
-                else "Информация отсутствует."
-            )
+            story_cards_content = format_all_cards_for_summary(self.story_cards)
 
-            prompt_template_base = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и информация о персонажах.
+            prompt_template_base = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
 Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
 ПРАВИЛА:
 1. Сформируй кратую исторую в хронологическомы порядке.
 2. Игнорируй мелкую рутину, лишние диалоги.
 3. Пиши структурированно, лаконично.
 4. Обязательно учти информацию из СТАРОГО краткого содержания.
-5. УЧТИ ИНФОРМАЦИЮ О ПЕРСОНАЖАХ.
+5. УЧТИ ИНФОРМАЦИЮ ИЗ КАРТОЧЕК ИСТОРИИ.
 
-ИНФОРМАЦИЯ О ПЕРСОНАЖАХ:
-{characters_content}
+КАРТОЧКИ ИСТОРИИ:
+{story_cards_content}
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
@@ -323,7 +329,7 @@ class AIEngineMixin:
 
             history_text = "\n".join(short_history)
 
-            prompt = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и информация о персонажах.
+            prompt = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
 Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
 ПРАВИЛА:
 1. Сформируй кратую исторую в хронологическомы порядке.
@@ -331,8 +337,8 @@ class AIEngineMixin:
 3. Пиши лаконично, тезисно.
 4. Учти СТАРОЕ краткое содержание.
 
-ИНФОРМАЦИЯ О ПЕРСОНАЖАХ:
-{characters_content}
+КАРТОЧКИ ИСТОРИИ:
+{story_cards_content}
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}

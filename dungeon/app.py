@@ -8,6 +8,7 @@ from .ai_engine import AIEngineMixin
 from .config import BASE_DIR, COLORS, WINDOW_SIZE, WINDOW_TITLE
 from .dialogs import DialogMixin
 from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
+from .story_cards import load_story_cards
 from .storage import (
     get_world_list,
     load_global_settings,
@@ -37,9 +38,12 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.memory_interval = settings["memory_interval"]
         self.memory_top_k = settings["memory_top_k"]
         self.stream_mode = settings["stream_mode"]
+        self.summary_enabled = settings.get("summary_enabled", True)
+        self.memory_enabled = settings.get("memory_enabled", True)
         self.turns_since_summary = 0
         self.turns_since_memory = 0
         self.memory_bank = {"last_indexed_turn": 0, "entries": []}
+        self.story_cards = {"cards": []}
 
         self.processing = False
         self.dm_stream_start_index = None
@@ -48,6 +52,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
         self.create_widgets()
         self.initialize_world()
+        self.update_toggle_buttons()
         self.update_summary_label()
         self.update_memory_label()
 
@@ -66,6 +71,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 "memory_interval": self.memory_interval,
                 "memory_top_k": self.memory_top_k,
                 "stream_mode": self.stream_mode,
+                "summary_enabled": self.summary_enabled,
+                "memory_enabled": self.memory_enabled,
             }
         )
 
@@ -118,17 +125,38 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.status_label = ctk.CTkLabel(info_frame, text="● Готов", text_color=COLORS["player_color"])
         self.status_label.pack(side=ctk.RIGHT, padx=10, pady=5)
 
+        self.summary_toggle_btn = ctk.CTkButton(
+            info_frame,
+            text="",
+            width=105,
+            height=28,
+            command=self.toggle_summary,
+            font=ctk.CTkFont(size=11),
+        )
+        self.summary_toggle_btn.pack(side=ctk.RIGHT, padx=5, pady=5)
+
         self.summary_label = ctk.CTkLabel(info_frame, text="До суммаризации: -", text_color="gray")
-        self.summary_label.pack(side=ctk.RIGHT, padx=10, pady=5)
+        self.summary_label.pack(side=ctk.RIGHT, padx=5, pady=5)
+
+        self.memory_toggle_btn = ctk.CTkButton(
+            info_frame,
+            text="",
+            width=115,
+            height=28,
+            command=self.toggle_memory,
+            font=ctk.CTkFont(size=11),
+        )
+        self.memory_toggle_btn.pack(side=ctk.RIGHT, padx=5, pady=5)
 
         self.memory_label = ctk.CTkLabel(info_frame, text="До памяти: -", text_color="gray")
-        self.memory_label.pack(side=ctk.RIGHT, padx=10, pady=5)
+        self.memory_label.pack(side=ctk.RIGHT, padx=5, pady=5)
 
         top_button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         top_button_frame.pack(fill=ctk.X, pady=(0, 10))
 
         top_commands = [
             ("📁 Файлы мира", self.open_world_files),
+            ("📇 Карточки", self.open_story_cards_editor),
             ("🔄 Миры", self.manage_worlds),
             ("⚙️ Настройки ИИ", self.open_ai_settings),
             ("❌ Выйти", self.quit_app),
@@ -218,9 +246,47 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area.configure(state="disabled")
         self.text_area.see(tk.END)
 
+    def update_toggle_buttons(self):
+        if self.summary_enabled:
+            self.summary_toggle_btn.configure(
+                text="📝 Сумм.: ВКЛ",
+                fg_color=COLORS["player_color"],
+                hover_color=COLORS["player_color"],
+            )
+        else:
+            self.summary_toggle_btn.configure(text="📝 Сумм.: ВЫКЛ", fg_color="gray40", hover_color="gray50")
+
+        if self.memory_enabled:
+            self.memory_toggle_btn.configure(
+                text="🧠 Память: ВКЛ",
+                fg_color=COLORS["player_color"],
+                hover_color=COLORS["player_color"],
+            )
+        else:
+            self.memory_toggle_btn.configure(text="🧠 Память: ВЫКЛ", fg_color="gray40", hover_color="gray50")
+
+    def toggle_summary(self):
+        self.summary_enabled = not self.summary_enabled
+        self.save_global_settings()
+        self.update_toggle_buttons()
+        self.update_summary_label()
+        state = "включена" if self.summary_enabled else "выключена"
+        self.add_system_message(f"📝 Автосуммаризация {state}.")
+
+    def toggle_memory(self):
+        self.memory_enabled = not self.memory_enabled
+        self.save_global_settings()
+        self.update_toggle_buttons()
+        self.update_memory_label()
+        state = "включён" if self.memory_enabled else "выключён"
+        self.add_system_message(f"🧠 Банк памяти {state}.")
+
     def update_summary_label(self):
         if not self.current_world_path:
             self.summary_label.configure(text="До суммаризации: -")
+            return
+        if not self.summary_enabled:
+            self.summary_label.configure(text="Сумм.: выкл", text_color="gray")
             return
         remaining = max(0, self.summary_interval - self.turns_since_summary)
         color = COLORS["accent"] if remaining <= 2 else "gray"
@@ -229,6 +295,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
     def update_memory_label(self):
         if not self.current_world_path:
             self.memory_label.configure(text="До памяти: -")
+            return
+        if not self.memory_enabled:
+            entries_count = len(self.memory_bank.get("entries", []))
+            self.memory_label.configure(text=f"Память: {entries_count} | выкл", text_color="gray")
             return
         remaining = max(0, self.memory_interval - self.turns_since_memory)
         color = COLORS["accent"] if remaining <= 1 else "gray"
@@ -256,6 +326,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.last_sent_prompt = None
         _, self.history = load_world_config(world_name)
         self.memory_bank = load_memory_bank(world_path)
+        self.story_cards = load_story_cards(world_path)
         current_turns = count_completed_turns(self.history)
         self.turns_since_memory = current_turns - self.memory_bank.get("last_indexed_turn", 0)
 
@@ -271,7 +342,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if self.processing or not self.history or not self.current_world_path:
             return
         self.history.pop()
-        if self.turns_since_summary > 0:
+        if self.summary_enabled and self.turns_since_summary > 0:
             self.turns_since_summary -= 1
         save_history(self.current_world_path, self.history)
         self.memory_bank, self.turns_since_memory = sync_memory_bank_after_undo(self.history, self.memory_bank)
@@ -309,10 +380,14 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if user_input:
             self.add_player_message(user_input)
 
-        self.turns_since_summary += 1
-        self.turns_since_memory += 1
-        self.update_summary_label()
-        self.update_memory_label()
+        if self.summary_enabled:
+            self.turns_since_summary += 1
+        if self.memory_enabled:
+            self.turns_since_memory += 1
+        if self.summary_enabled:
+            self.update_summary_label()
+        if self.memory_enabled:
+            self.update_memory_label()
         self.processing = True
         self.send_button.configure(state="disabled", text="⏳ Думаю...")
         self.status_label.configure(text="● Generation...", text_color=COLORS["system_color"])

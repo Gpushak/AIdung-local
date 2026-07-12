@@ -54,6 +54,8 @@ def load_global_settings():
         "memory_interval": 5,
         "memory_top_k": 5,
         "stream_mode": True,
+        "summary_enabled": True,
+        "memory_enabled": True,
     }
     if SETTINGS_FILE.exists():
         try:
