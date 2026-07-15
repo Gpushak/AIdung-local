@@ -47,9 +47,9 @@ def save_history(world_path, history):
 
 def load_global_settings():
     defaults = {
-        "temperature": 0.9,
-        "max_tokens": 400,
-        "context_size": 24576,
+        "temperature": 0.7,
+        "max_tokens": 300,
+        "context_size": 16384,
         "summary_interval": 10,
         "memory_interval": 5,
         "memory_top_k": 5,

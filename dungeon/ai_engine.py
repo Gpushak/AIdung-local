@@ -284,9 +284,6 @@ class AIEngineMixin:
             old_summary = (
                 summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else "Отсутствует."
             )
-
-            story_cards_content = format_all_cards_for_summary(self.story_cards)
-
             prompt_template_base = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
 Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
 ПРАВИЛА:
@@ -294,10 +291,6 @@ class AIEngineMixin:
 2. Игнорируй мелкую рутину, лишние диалоги.
 3. Пиши структурированно, лаконично.
 4. Обязательно учти информацию из СТАРОГО краткого содержания.
-5. УЧТИ ИНФОРМАЦИЮ ИЗ КАРТОЧЕК ИСТОРИИ.
-
-КАРТОЧКИ ИСТОРИИ:
-{story_cards_content}
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
@@ -336,9 +329,6 @@ class AIEngineMixin:
 2. Игнорируй мелкую рутину.
 3. Пиши лаконично, тезисно.
 4. Учти СТАРОЕ краткое содержание.
-
-КАРТОЧКИ ИСТОРИИ:
-{story_cards_content}
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
