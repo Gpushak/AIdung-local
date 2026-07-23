@@ -235,8 +235,15 @@ class DialogMixin:
 
         ctk.CTkLabel(left, text="Карточки:", font=ctk.CTkFont(weight="bold")).pack(pady=(0, 5))
 
+        search_var = ctk.StringVar()
+        search_entry = ctk.CTkEntry(left, textvariable=search_var, placeholder_text="Поиск карточек...")
+        search_entry.pack(fill=tk.X, pady=(0, 5))
+
+        list_frame = ctk.CTkFrame(left, fg_color="transparent")
+        list_frame.pack(fill=ctk.BOTH, expand=True)
+
         card_listbox = tk.Listbox(
-            left,
+            list_frame,
             bg=COLORS["listbox_bg"],
             fg="white",
             selectbackground=COLORS["listbox_sel"],
@@ -245,7 +252,11 @@ class DialogMixin:
             highlightthickness=0,
             borderwidth=0,
         )
-        card_listbox.pack(fill=ctk.BOTH, expand=True)
+        card_listbox.pack(side=tk.LEFT, fill=ctk.BOTH, expand=True)
+
+        list_scrollbar = ctk.CTkScrollbar(list_frame, command=card_listbox.yview)
+        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        card_listbox.configure(yscrollcommand=list_scrollbar.set)
 
         right = ctk.CTkFrame(parent, fg_color="transparent")
         right.pack(side=ctk.RIGHT, fill=ctk.BOTH, expand=True)
@@ -277,19 +288,35 @@ class DialogMixin:
         btn_row = ctk.CTkFrame(right, fg_color="transparent")
         btn_row.pack(fill=ctk.X, padx=5, pady=5)
 
-        state = {"selected_index": None, "loading": False}
+        state = {"selected_index": None, "loading": False, "visible_indices": []}
 
         def refresh_list(select_index=None):
             card_listbox.delete(0, tk.END)
-            for card in cards_data.get("cards", []):
+            query = search_var.get().strip().lower()
+            state["visible_indices"] = []
+            for index, card in enumerate(cards_data.get("cards", [])):
+                searchable_text = " ".join(
+                    [
+                        str(card.get("title", "")),
+                        str(card.get("description", "")),
+                        " ".join(str(trigger) for trigger in card.get("triggers", [])),
+                    ]
+                ).lower()
+                if query and query not in searchable_text:
+                    continue
                 card_listbox.insert(tk.END, card.get("title", "Без названия"))
-            if select_index is not None and cards_data.get("cards"):
-                card_listbox.selection_set(select_index)
-                card_listbox.activate(select_index)
+                state["visible_indices"].append(index)
+
+            if select_index in state["visible_indices"]:
+                visible_index = state["visible_indices"].index(select_index)
+                card_listbox.selection_set(visible_index)
+                card_listbox.activate(visible_index)
                 load_card(select_index)
-            elif cards_data.get("cards"):
+            elif state["visible_indices"]:
                 card_listbox.selection_set(0)
-                load_card(0)
+                load_card(state["visible_indices"][0])
+            else:
+                load_card(-1)
 
         def load_card(index):
             cards = cards_data.get("cards", [])
@@ -303,9 +330,9 @@ class DialogMixin:
             state["selected_index"] = index
             card = cards[index]
             title_entry.delete(0, tk.END)
-            title_entry.insert(0, card.get("title", ""))
+            title_entry.insert(0, str(card.get("title", "")))
             desc_text.delete("1.0", tk.END)
-            desc_text.insert("1.0", card.get("description", ""))
+            desc_text.insert("1.0", str(card.get("description", "")))
             triggers_entry.delete(0, tk.END)
             triggers_entry.insert(0, format_triggers(card.get("triggers", [])))
             state["loading"] = False
@@ -324,10 +351,10 @@ class DialogMixin:
 
         def on_card_select(_event=None):
             sel = card_listbox.curselection()
-            if not sel:
+            if not sel or sel[0] >= len(state["visible_indices"]):
                 return
             apply_current_card()
-            load_card(sel[0])
+            load_card(state["visible_indices"][sel[0]])
 
         def add_card():
             apply_current_card()
@@ -360,6 +387,7 @@ class DialogMixin:
                 self.add_system_message("✅ Карточки историй сохранены")
 
         card_listbox.bind("<<ListboxSelect>>", on_card_select)
+        search_var.trace_add("write", lambda *_: refresh_list(state["selected_index"]))
 
         if editable:
             ctk.CTkButton(btn_row, text="➕ Добавить", command=add_card, width=100).pack(side=ctk.LEFT, padx=3)
