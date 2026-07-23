@@ -167,6 +167,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
         self.text_area = ctk.CTkTextbox(main_frame, wrap=tk.WORD, font=ctk.CTkFont(family="Arial", size=14))
         self.text_area.pack(fill=ctk.BOTH, expand=True, pady=(0, 10))
+        self.text_area.bind("<Button-3>", self.show_context_menu)
+        self.text_area.bind("<Control-KeyPress>", self.handle_text_shortcut)
 
         self.text_area._textbox.tag_config("player", foreground=COLORS["player_color"], font=("Arial", 14, "bold"))
         self.text_area._textbox.tag_config("dm", foreground=COLORS["dm_color"], font=("Arial", 14))
@@ -208,6 +210,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.input_field.pack(side=ctk.LEFT, fill=ctk.X, expand=True, padx=(0, 10))
         self.input_field.bind("<Return>", self.handle_input_enter)
         self.input_field.bind("<Button-3>", self.show_context_menu)
+        self.input_field.bind("<Control-KeyPress>", self.handle_text_shortcut)
         self.input_field.focus()
 
         self.send_button = ctk.CTkButton(
@@ -228,6 +231,41 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             return
         self.send_action()
         return "break"
+
+    def handle_text_shortcut(self, event):
+        """Обрабатывает Ctrl-сочетания по физическому коду клавиши."""
+        key_commands = {
+            65: "select_all",
+            67: "copy",
+            86: "paste",
+            88: "cut",
+        }
+        command = key_commands.get(event.keycode)
+        if command is None:
+            return
+
+        target = event.widget._textbox if hasattr(event.widget, "_textbox") else event.widget
+        if command == "select_all":
+            self.select_all_text(target)
+        elif command == "copy":
+            self.copy_selected_text(target)
+        else:
+            virtual_event = {"paste": "<<Paste>>", "cut": "<<Cut>>"}[command]
+            target.event_generate(virtual_event)
+        return "break"
+
+    def copy_selected_text(self, target):
+        try:
+            selected_text = target.selection_get()
+        except tk.TclError:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(selected_text)
+
+    def select_all_text(self, target):
+        target.tag_add(tk.SEL, "1.0", "end-1c")
+        target.mark_set(tk.INSERT, "1.0")
+        target.see(tk.INSERT)
 
     def refresh_chat_display(self):
         self.text_area.configure(state="normal")
@@ -434,9 +472,11 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def show_context_menu(self, event):
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Копировать", command=lambda: event.widget.event_generate("<<Copy>>"))
-        menu.add_command(label="Вставить", command=lambda: event.widget.event_generate("<<Paste>>"))
-        menu.add_command(label="Вырезать", command=lambda: event.widget.event_generate("<<Cut>>"))
+        target = event.widget._textbox if hasattr(event.widget, "_textbox") else event.widget
+        menu.add_command(label="Выделить всё", command=lambda: self.select_all_text(target))
+        menu.add_command(label="Копировать", command=lambda: self.copy_selected_text(target))
+        menu.add_command(label="Вставить", command=lambda: target.event_generate("<<Paste>>"))
+        menu.add_command(label="Вырезать", command=lambda: target.event_generate("<<Cut>>"))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
