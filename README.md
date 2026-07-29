@@ -20,13 +20,7 @@
 ### Зависимости Python
 
 ```bash
-pip install customtkinter requests
-```
-
-Опционально (точнее считает токены):
-
-```bash
-pip install tiktoken
+pip install customtkinter requests tiktoken
 ```
 
 ## Запуск
