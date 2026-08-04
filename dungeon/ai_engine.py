@@ -22,12 +22,19 @@ from .tokens import count_tokens
 
 
 class AIEngineMixin:
-    def run_memory_indexing(self, force=False):
+    def start_memory_indexing(self, force=False):
         if self.memory_indexing:
             return
         if not self.memory_enabled and not force:
             return
         self.memory_indexing = True
+        self.refresh_busy_state()
+        Thread(target=self._run_memory_indexing_impl, args=(force,), daemon=True).start()
+
+    def run_memory_indexing(self, force=False):
+        self.root.after(0, lambda: self.start_memory_indexing(force))
+
+    def _run_memory_indexing_impl(self, force=False):
         try:
             if not self.current_world_path:
                 return
@@ -103,6 +110,7 @@ class AIEngineMixin:
             self.root.after(0, lambda msg=err_msg: self.add_system_message(f"⚠️ Ошибка индексации памяти: {msg}"))
         finally:
             self.memory_indexing = False
+            self.root.after(0, self.refresh_busy_state)
 
     def process_action(self, user_input):
         try:
@@ -257,15 +265,19 @@ class AIEngineMixin:
                 ),
             )
 
-            if self.summary_enabled and self.turns_since_summary >= self.summary_interval:
+            self._schedule_summary_after_turn = (
+                self.summary_enabled and self.turns_since_summary >= self.summary_interval
+            )
+            if self._schedule_summary_after_turn:
                 self.turns_since_summary = 0
                 self.root.after(0, lambda: self.add_system_message("📝 ИИ пересматривает хронологию..."))
-                Thread(target=self.generate_global_summary, daemon=True).start()
 
-            if self.memory_enabled and self.turns_since_memory >= self.memory_interval:
+            self._schedule_memory_after_turn = (
+                self.memory_enabled and self.turns_since_memory >= self.memory_interval
+            )
+            if self._schedule_memory_after_turn:
                 self.turns_since_memory = 0
                 self.root.after(0, self.update_memory_label)
-                Thread(target=self.run_memory_indexing, daemon=True).start()
 
         except requests.exceptions.ConnectionError:
             self.root.after(0, lambda: self.add_system_message("❌ Ошибка: Локальный сервер ИИ не запущен!"))
@@ -273,9 +285,29 @@ class AIEngineMixin:
             err_msg = str(e)
             self.root.after(0, lambda msg=err_msg: self.add_system_message(f"❌ Ошибка: {msg}"))
         finally:
-            self.root.after(0, self.processing_end)
+            self.root.after(0, self._finish_player_turn)
+
+    def _finish_player_turn(self):
+        self.processing = False
+        if self._schedule_summary_after_turn:
+            self._schedule_summary_after_turn = False
+            self.start_global_summary()
+        if self._schedule_memory_after_turn:
+            self._schedule_memory_after_turn = False
+            self.start_memory_indexing()
+        self.refresh_busy_state()
+
+    def start_global_summary(self):
+        if self.summary_indexing:
+            return
+        self.summary_indexing = True
+        self.refresh_busy_state()
+        Thread(target=self._generate_global_summary_impl, daemon=True).start()
 
     def generate_global_summary(self):
+        self.root.after(0, self.start_global_summary)
+
+    def _generate_global_summary_impl(self):
         try:
             if not self.current_world_path:
                 return
@@ -284,6 +316,7 @@ class AIEngineMixin:
             old_summary = (
                 summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else "Отсутствует."
             )
+            story_cards_content = format_all_cards_for_summary(self.story_cards)
             prompt_template_base = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
 Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
 ПРАВИЛА:
@@ -291,6 +324,10 @@ class AIEngineMixin:
 2. Игнорируй мелкую рутину, лишние диалоги.
 3. Пиши структурированно, лаконично.
 4. Обязательно учти информацию из СТАРОГО краткого содержания.
+5. УЧТИ ИНФОРМАЦИЮ ИЗ КАРТОЧЕК ИСТОРИИ.
+
+КАРТОЧКИ ИСТОРИИ:
+{story_cards_content}
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
@@ -330,6 +367,9 @@ class AIEngineMixin:
 3. Пиши лаконично, тезисно.
 4. Учти СТАРОЕ краткое содержание.
 
+КАРТОЧКИ ИСТОРИИ:
+{story_cards_content}
+
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
 
@@ -361,3 +401,6 @@ class AIEngineMixin:
             self.root.after(
                 0, lambda msg=err_msg: self.add_system_message(f"⚠️ Не удалось автоматически обновить саммари: {msg}")
             )
+        finally:
+            self.summary_indexing = False
+            self.root.after(0, self.refresh_busy_state)

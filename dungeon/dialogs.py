@@ -662,12 +662,12 @@ class DialogMixin:
         ctk.CTkButton(btn_frame, text="❌ Отмена", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
     def force_summary(self):
-        if self.processing or not self.current_world_path:
+        if self.is_busy() or not self.current_world_path:
             return
         self.turns_since_summary = 0
         self.update_summary_label()
         self.add_system_message("📝 Принудительное обновление краткого содержания...")
-        Thread(target=self.generate_global_summary, daemon=True).start()
+        self.generate_global_summary()
 
     def show_last_prompt(self):
         if not self.last_sent_prompt:
@@ -745,7 +745,7 @@ class DialogMixin:
         def force_index():
             win.destroy()
             self.add_system_message("🧠 Принудительная индексация памяти...")
-            Thread(target=self.run_memory_indexing, kwargs={"force": True}, daemon=True).start()
+            self.run_memory_indexing(force=True)
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, padx=15, pady=(0, 15))

@@ -49,6 +49,9 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.dm_stream_start_index = None
         self.last_sent_prompt = None
         self.memory_indexing = False
+        self.summary_indexing = False
+        self._schedule_summary_after_turn = False
+        self._schedule_memory_after_turn = False
 
         self.create_widgets()
         self.initialize_world()
@@ -377,7 +380,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.world_var.set(self.world_name)
 
     def undo_action(self):
-        if self.processing or not self.history or not self.current_world_path:
+        if self.is_busy() or not self.history or not self.current_world_path:
             return
         self.history.pop()
         if self.summary_enabled and self.turns_since_summary > 0:
@@ -391,7 +394,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.add_system_message("⏪ Последнее сообщение удалено.")
 
     def regenerate_action(self):
-        if self.processing or not self.history or not self.current_world_path:
+        if self.is_busy() or not self.history or not self.current_world_path:
             return
 
         if self.history[-1].startswith("Мастер:"):
@@ -405,12 +408,11 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.refresh_chat_display()
 
         self.processing = True
-        self.send_button.configure(state="disabled", text="⏳ Думаю...")
-        self.status_label.configure(text="● Generation...", text_color=COLORS["system_color"])
+        self.refresh_busy_state()
         Thread(target=self.process_action, args=(last_player_input,), daemon=True).start()
 
     def send_action(self):
-        if self.processing or not self.current_world_path:
+        if self.is_busy() or not self.current_world_path:
             return
         user_input = self.input_field.get("1.0", tk.END).strip()
         self.input_field.delete("1.0", tk.END)
@@ -427,8 +429,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if self.memory_enabled:
             self.update_memory_label()
         self.processing = True
-        self.send_button.configure(state="disabled", text="⏳ Думаю...")
-        self.status_label.configure(text="● Generation...", text_color=COLORS["system_color"])
+        self.refresh_busy_state()
         Thread(target=self.process_action, args=(user_input,), daemon=True).start()
 
     def start_dm_stream(self):
@@ -452,11 +453,43 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area.configure(state="disabled")
         self.text_area.see(tk.END)
 
+    def is_busy(self):
+        return self.processing or self.memory_indexing or self.summary_indexing
+
+    def refresh_busy_state(self):
+        if self.processing:
+            btn_text = "⏳ Думаю..."
+            status_text = "● Generation..."
+            lock_input = True
+        elif self.summary_indexing and self.memory_indexing:
+            btn_text = "⏳ Фоновые задачи..."
+            status_text = "● Суммаризация и память..."
+            lock_input = False
+        elif self.summary_indexing:
+            btn_text = "⏳ Суммаризация..."
+            status_text = "● Суммаризация..."
+            lock_input = False
+        elif self.memory_indexing:
+            btn_text = "⏳ Память..."
+            status_text = "● Индексация памяти..."
+            lock_input = False
+        else:
+            self.send_button.configure(state="normal", text="▶ Отправить")
+            self.input_field.configure(state="normal")
+            self.status_label.configure(text="● Готов", text_color=COLORS["player_color"])
+            self.input_field.focus()
+            return
+
+        self.send_button.configure(state="disabled", text=btn_text)
+        if lock_input:
+            self.input_field.configure(state="disabled")
+        else:
+            self.input_field.configure(state="normal")
+        self.status_label.configure(text=status_text, text_color=COLORS["system_color"])
+
     def processing_end(self):
         self.processing = False
-        self.send_button.configure(state="normal", text="▶ Отправить")
-        self.status_label.configure(text="● Готов", text_color=COLORS["player_color"])
-        self.input_field.focus()
+        self.refresh_busy_state()
 
     def add_system_message(self, message):
         self.text_area.configure(state="normal")
