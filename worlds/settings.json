@@ -1,1 +1,1 @@
-{"temperature": 0.8999999999999999, "max_tokens": 400, "context_size": 24576, "summary_interval": 10, "memory_interval": 5, "memory_top_k": 5, "stream_mode": true, "summary_enabled": true, "memory_enabled": true}
+{"temperature": 0.8999999999999999, "max_tokens": 400, "context_size": 12288, "summary_interval": 10, "memory_interval": 5, "memory_top_k": 5, "stream_mode": false, "summary_enabled": true, "memory_enabled": true}
