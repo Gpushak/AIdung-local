@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Сборка и релизы
+App_finale/
+*.zip
+
+# Пользовательские данные
+worlds/
+!worlds/settings.example.json
