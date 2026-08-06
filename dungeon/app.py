@@ -31,6 +31,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.history = []
 
         settings = load_global_settings()
+        self.api_url = settings["api_url"]
+        self.api_key = settings.get("api_key", "")
         self.temperature = settings["temperature"]
         self.max_tokens = settings["max_tokens"]
         self.context_size = settings["context_size"]
@@ -67,6 +69,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
     def save_global_settings(self):
         save_global_settings(
             {
+                "api_url": self.api_url,
+                "api_key": self.api_key,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
                 "context_size": self.context_size,

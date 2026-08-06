@@ -1,6 +1,6 @@
 import json
 
-from .config import BASE_DIR, SETTINGS_FILE, WORLD_FILES
+from .config import BASE_DIR, DEFAULT_API_URL, SETTINGS_FILE, WORLD_FILES
 
 
 def get_world_list():
@@ -47,6 +47,8 @@ def save_history(world_path, history):
 
 def load_global_settings():
     defaults = {
+        "api_url": DEFAULT_API_URL,
+        "api_key": "",
         "temperature": 0.7,
         "max_tokens": 300,
         "context_size": 16384,

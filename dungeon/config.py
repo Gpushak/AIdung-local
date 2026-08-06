@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-API_URL = "http://localhost:1234/v1/chat/completions"
+DEFAULT_API_URL = "http://localhost:1234/v1/chat/completions"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if getattr(sys, "frozen", False):

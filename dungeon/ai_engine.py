@@ -6,7 +6,7 @@ from threading import Thread
 
 import requests
 
-from .config import API_URL, WORLD_FILES
+from .config import WORLD_FILES
 from .memory import (
     count_completed_turns,
     format_memory_block,
@@ -22,6 +22,12 @@ from .tokens import count_tokens
 
 
 class AIEngineMixin:
+    def _api_headers(self):
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     def start_memory_indexing(self, force=False):
         if self.memory_indexing:
             return
@@ -61,7 +67,7 @@ class AIEngineMixin:
             fallback_text = "\n".join(messages)
             prompt = f"""Проанализируй фрагмент текстовой RPG-сессии.
 Сделай:
-1. summary — 1-3 предложения, только ключевые события и факты (имена, предметы, решения)
+1. summary — 3-6 предложений, только ключевые события и факты (имена, предметы, решения)
 2. keys — до 3 ключевых слов для поиска, только самые важные! (имена NPC, локации, предметы, события)
 3. location — текущая локация или null
 4. npcs — список упомянутых NPC
@@ -78,7 +84,7 @@ class AIEngineMixin:
                 "max_tokens": 350,
                 "stream": False,
             }
-            response = requests.post(API_URL, json=payload, timeout=120)
+            response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=120)
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"].strip()
             parsed = parse_memory_index_response(raw, fallback_text)
@@ -205,7 +211,7 @@ class AIEngineMixin:
             }
 
             if self.stream_mode:
-                response = requests.post(API_URL, json=payload, stream=True, timeout=120)
+                response = requests.post(self.api_url, json=payload, headers=self._api_headers(), stream=True, timeout=120)
                 response.raise_for_status()
 
                 self.root.after(0, self.start_dm_stream)
@@ -239,7 +245,7 @@ class AIEngineMixin:
                             pass
                 ai_text = raw_narration.strip()
             else:
-                response = requests.post(API_URL, json=payload, timeout=120)
+                response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=120)
                 response.raise_for_status()
                 ai_text = response.json()["choices"][0]["message"]["content"].strip()
                 self.root.after(0, self.start_dm_stream)
@@ -377,7 +383,7 @@ class AIEngineMixin:
                 "max_tokens": summary_max_tokens,
                 "stream": False,
             }
-            response = requests.post(API_URL, json=payload, timeout=180)
+            response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=180)
             response.raise_for_status()
             new_summary = response.json()["choices"][0]["message"]["content"].strip()
             new_summary = new_summary.replace("```json", "").replace("```", "").strip()

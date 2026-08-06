@@ -527,59 +527,89 @@ class DialogMixin:
     def open_ai_settings(self):
         win = ctk.CTkToplevel(self.root)
         win.title("⚙️ Настройки ИИ")
-        win.geometry("450x800")
+        win.geometry("450x900")
         win.transient(self.root)
         win.grab_set()
+
+        scroll = ctk.CTkScrollableFrame(win)
+        scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(scroll, text="URL API (Chat Completions):", font=("", 13, "bold")).pack(
+            anchor=tk.W, padx=10, pady=(10, 0)
+        )
+        api_url_entry = ctk.CTkEntry(scroll, placeholder_text="http://localhost:1234/v1/chat/completions")
+        api_url_entry.pack(fill=ctk.X, padx=10, pady=(5, 10))
+        api_url_entry.insert(0, self.api_url)
+
+        ctk.CTkLabel(scroll, text="API-ключ (необязательно):").pack(anchor=tk.W, padx=10)
+        api_key_entry = ctk.CTkEntry(scroll, placeholder_text="sk-...", show="*")
+        api_key_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
+        api_key_entry.insert(0, self.api_key)
+
+        show_key_var = ctk.BooleanVar(value=False)
+
+        def toggle_key_visibility():
+            api_key_entry.configure(show="" if show_key_var.get() else "*")
+
+        ctk.CTkCheckBox(scroll, text="Показать ключ", variable=show_key_var, command=toggle_key_visibility).pack(
+            anchor=tk.W, padx=10, pady=(0, 10)
+        )
+
+        ctk.CTkLabel(scroll, text="Параметры генерации", font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
 
         stream_var = ctk.BooleanVar(value=self.stream_mode)
         summary_enabled_var = ctk.BooleanVar(value=self.summary_enabled)
         memory_enabled_var = ctk.BooleanVar(value=self.memory_enabled)
-        ctk.CTkCheckBox(win, text="Потоковый ответ (Streaming)", variable=stream_var).pack(anchor=tk.W, padx=20, pady=(20, 10))
-        ctk.CTkCheckBox(win, text="Автосуммаризация", variable=summary_enabled_var).pack(anchor=tk.W, padx=20, pady=5)
-        ctk.CTkCheckBox(win, text="Банк памяти", variable=memory_enabled_var).pack(anchor=tk.W, padx=20, pady=(0, 10))
+        ctk.CTkCheckBox(scroll, text="Потоковый ответ (Streaming)", variable=stream_var).pack(anchor=tk.W, padx=10, pady=(5, 10))
+        ctk.CTkCheckBox(scroll, text="Автосуммаризация", variable=summary_enabled_var).pack(anchor=tk.W, padx=10, pady=5)
+        ctk.CTkCheckBox(scroll, text="Банк памяти", variable=memory_enabled_var).pack(anchor=tk.W, padx=10, pady=(0, 10))
 
-        ctk.CTkLabel(win, text="Температура (0.0 - 2.0):").pack(anchor=tk.W, padx=20)
-        temp_val_lbl = ctk.CTkLabel(win, text=f"{self.temperature:.1f}", text_color=COLORS["accent"])
-        temp_val_lbl.pack(anchor=tk.E, padx=20)
+        ctk.CTkLabel(scroll, text="Температура (0.0 - 2.0):").pack(anchor=tk.W, padx=10)
+        temp_val_lbl = ctk.CTkLabel(scroll, text=f"{self.temperature:.1f}", text_color=COLORS["accent"])
+        temp_val_lbl.pack(anchor=tk.E, padx=10)
 
         def update_temp_lbl(val):
             temp_val_lbl.configure(text=f"{val:.1f}")
 
-        temp_slider = ctk.CTkSlider(win, from_=0.0, to=2.0, number_of_steps=20, command=update_temp_lbl)
+        temp_slider = ctk.CTkSlider(scroll, from_=0.0, to=2.0, number_of_steps=20, command=update_temp_lbl)
         temp_slider.set(self.temperature)
-        temp_slider.pack(fill=ctk.X, padx=20, pady=(0, 15))
+        temp_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(win, text="Макс. токенов в ответе:").pack(anchor=tk.W, padx=20)
-        tokens_entry = ctk.CTkEntry(win)
-        tokens_entry.pack(fill=ctk.X, padx=20, pady=(5, 15))
+        ctk.CTkLabel(scroll, text="Макс. токенов в ответе:").pack(anchor=tk.W, padx=10)
+        tokens_entry = ctk.CTkEntry(scroll)
+        tokens_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
         tokens_entry.insert(0, str(self.max_tokens))
 
-        ctk.CTkLabel(win, text="Размер контекста:").pack(anchor=tk.W, padx=20)
-        ctx_val_lbl = ctk.CTkLabel(win, text=f"{self.context_size}", text_color=COLORS["accent"])
-        ctx_val_lbl.pack(anchor=tk.E, padx=20)
+        ctk.CTkLabel(scroll, text="Размер контекста:").pack(anchor=tk.W, padx=10)
+        ctx_val_lbl = ctk.CTkLabel(scroll, text=f"{self.context_size}", text_color=COLORS["accent"])
+        ctx_val_lbl.pack(anchor=tk.E, padx=10)
 
         def update_ctx_lbl(val):
             ctx_val_lbl.configure(text=f"{int(val)}")
 
-        ctx_slider = ctk.CTkSlider(win, from_=4096, to=131072, number_of_steps=31, command=update_ctx_lbl)
+        ctx_slider = ctk.CTkSlider(scroll, from_=4096, to=131072, number_of_steps=31, command=update_ctx_lbl)
         ctx_slider.set(self.context_size)
-        ctx_slider.pack(fill=ctk.X, padx=20, pady=(0, 15))
+        ctx_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(win, text="Суммаризация (каждые N ходов):").pack(anchor=tk.W, padx=20)
+        ctk.CTkLabel(scroll, text="Суммаризация (каждые N ходов):").pack(anchor=tk.W, padx=10)
         interval_var = ctk.StringVar(value=str(self.summary_interval))
-        ctk.CTkOptionMenu(win, variable=interval_var, values=["5", "10", "15", "20"]).pack(anchor=tk.W, padx=20, pady=5)
+        ctk.CTkOptionMenu(scroll, variable=interval_var, values=["5", "10", "15", "20"]).pack(anchor=tk.W, padx=10, pady=5)
 
-        ctk.CTkLabel(win, text="Банк памяти (индексация каждые N ходов):").pack(anchor=tk.W, padx=20, pady=(10, 0))
+        ctk.CTkLabel(scroll, text="Банк памяти (индексация каждые N ходов):").pack(anchor=tk.W, padx=10, pady=(10, 0))
         memory_interval_var = ctk.StringVar(value=str(self.memory_interval))
-        ctk.CTkOptionMenu(win, variable=memory_interval_var, values=["3", "5", "10", "15"]).pack(
-            anchor=tk.W, padx=20, pady=5
+        ctk.CTkOptionMenu(scroll, variable=memory_interval_var, values=["3", "5", "10", "15"]).pack(
+            anchor=tk.W, padx=10, pady=5
         )
 
-        ctk.CTkLabel(win, text="Макс. воспоминаний в промпте:").pack(anchor=tk.W, padx=20)
+        ctk.CTkLabel(scroll, text="Макс. воспоминаний в промпте:").pack(anchor=tk.W, padx=10)
         memory_top_k_var = ctk.StringVar(value=str(self.memory_top_k))
-        ctk.CTkOptionMenu(win, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=20, pady=5)
+        ctk.CTkOptionMenu(scroll, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=10, pady=5)
 
         def apply_settings():
+            api_url = api_url_entry.get().strip()
+            if api_url:
+                self.api_url = api_url
+            self.api_key = api_key_entry.get().strip()
             self.stream_mode = stream_var.get()
             self.summary_enabled = summary_enabled_var.get()
             self.memory_enabled = memory_enabled_var.get()
@@ -606,13 +636,14 @@ class DialogMixin:
             self.update_summary_label()
             self.update_memory_label()
             self.add_system_message(
-                f"⚙️ Настройки сохранены. Стриминг: {'ВКЛ' if self.stream_mode else 'ВЫКЛ'}. "
+                f"⚙️ Настройки сохранены. API: {self.api_url}. "
+                f"Стриминг: {'ВКЛ' if self.stream_mode else 'ВЫКЛ'}. "
                 f"Суммаризация: {'ВКЛ' if self.summary_enabled else 'ВЫКЛ'}. "
                 f"Память: {'ВКЛ' if self.memory_enabled else 'ВЫКЛ'}."
             )
             win.destroy()
 
-        ctk.CTkButton(win, text="💾 Сохранить", command=apply_settings).pack(pady=20)
+        ctk.CTkButton(win, text="💾 Сохранить", command=apply_settings).pack(pady=10)
 
     def quit_app(self):
         if messagebox.askyesno("Выход", "Действительно выйти из игры?"):
