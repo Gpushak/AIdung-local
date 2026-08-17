@@ -28,6 +28,12 @@ class AIEngineMixin:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    def _api_payload(self, **fields):
+        payload = dict(fields)
+        if self.model:
+            payload["model"] = self.model
+        return payload
+
     def start_memory_indexing(self, force=False):
         if self.memory_indexing:
             return
@@ -78,12 +84,12 @@ class AIEngineMixin:
 Ответь ТОЛЬКО валидным JSON:
 {{"summary": "...", "keys": ["...", "..."], "location": "...", "npcs": ["..."]}}"""
 
-            payload = {
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 350,
-                "stream": False,
-            }
+            payload = self._api_payload(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=350,
+                stream=False,
+            )
             response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=120)
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"].strip()
@@ -199,16 +205,16 @@ class AIEngineMixin:
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
 
-            payload = {
-                "messages": [
+            payload = self._api_payload(
+                messages=[
                     {"role": "system", "content": system_final_content},
                     {"role": "user", "content": user_content},
                 ],
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "stream": self.stream_mode,
-                "stop": ["\nИгрок:", "Игрок:", "<|im_end|>", "<|eot_id|>", "```", "---"],
-            }
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=self.stream_mode,
+                stop=["\nИгрок:", "Игрок:", "<|im_end|>", "<|eot_id|>", "```", "---"],
+            )
 
             if self.stream_mode:
                 response = requests.post(self.api_url, json=payload, headers=self._api_headers(), stream=True, timeout=120)
@@ -377,12 +383,12 @@ class AIEngineMixin:
 
 Выдай только текст нового краткого содержания простым текстом без лишних *, вступлений и Markdown."""
 
-            payload = {
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": summary_max_tokens,
-                "stream": False,
-            }
+            payload = self._api_payload(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=summary_max_tokens,
+                stream=False,
+            )
             response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=180)
             response.raise_for_status()
             new_summary = response.json()["choices"][0]["message"]["content"].strip()

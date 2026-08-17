@@ -42,6 +42,9 @@ if (Test-Path $SettingsSrc) {
 {
   "api_url": "http://localhost:1234/v1/chat/completions",
   "api_key": "",
+  "model": "",
+  "active_api_preset": "",
+  "api_presets": [],
   "temperature": 0.7,
   "max_tokens": 300,
   "context_size": 16384,

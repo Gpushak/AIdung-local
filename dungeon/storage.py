@@ -45,10 +45,34 @@ def save_history(world_path, history):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
+def normalize_api_presets(presets):
+    if not isinstance(presets, list):
+        return []
+    normalized = []
+    for preset in presets:
+        if not isinstance(preset, dict):
+            continue
+        name = str(preset.get("name", "")).strip()
+        if not name:
+            continue
+        normalized.append(
+            {
+                "name": name,
+                "api_url": str(preset.get("api_url", "")),
+                "api_key": str(preset.get("api_key", "")),
+                "model": str(preset.get("model", "")),
+            }
+        )
+    return normalized
+
+
 def load_global_settings():
     defaults = {
         "api_url": DEFAULT_API_URL,
         "api_key": "",
+        "model": "",
+        "active_api_preset": "",
+        "api_presets": [],
         "temperature": 0.7,
         "max_tokens": 300,
         "context_size": 16384,
@@ -66,6 +90,10 @@ def load_global_settings():
                 defaults.update(saved)
         except:
             pass
+    defaults["api_presets"] = normalize_api_presets(defaults.get("api_presets", []))
+    active_preset = defaults.get("active_api_preset", "")
+    if active_preset and not any(p["name"] == active_preset for p in defaults["api_presets"]):
+        defaults["active_api_preset"] = ""
     return defaults
 
 

@@ -3,7 +3,7 @@ from threading import Thread
 
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 from .config import BASE_DIR, COLORS, DEFAULT_TEMPLATES, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
 from .storage import get_world_list, save_history, save_world_files
@@ -525,25 +525,116 @@ class DialogMixin:
         self.add_system_message(f"✅ Файл {self.current_editing_file} сохранён")
 
     def open_ai_settings(self):
+        MANUAL_PRESET = "— Вручную —"
+
         win = ctk.CTkToplevel(self.root)
         win.title("⚙️ Настройки ИИ")
-        win.geometry("450x900")
+        win.geometry("450x950")
         win.transient(self.root)
         win.grab_set()
 
         scroll = ctk.CTkScrollableFrame(win)
         scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        ctk.CTkLabel(scroll, text="URL API (Chat Completions):", font=("", 13, "bold")).pack(
-            anchor=tk.W, padx=10, pady=(10, 0)
+        api_presets_local = [dict(p) for p in self.api_presets]
+
+        ctk.CTkLabel(scroll, text="Конфигурация API", font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 0))
+
+        preset_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        preset_row.pack(fill=tk.X, padx=10, pady=(5, 5))
+
+        initial_preset = (
+            self.active_api_preset
+            if any(p["name"] == self.active_api_preset for p in api_presets_local)
+            else MANUAL_PRESET
         )
+        preset_var = ctk.StringVar(value=initial_preset)
+
+        def get_preset_values():
+            return [MANUAL_PRESET] + [p["name"] for p in api_presets_local]
+
         api_url_entry = ctk.CTkEntry(scroll, placeholder_text="http://localhost:1234/v1/chat/completions")
+        api_key_entry = ctk.CTkEntry(scroll, placeholder_text="sk-...", show="*")
+        model_entry = ctk.CTkEntry(scroll, placeholder_text="deepseek/deepseek-v3.2")
+
+        def fill_api_fields(preset):
+            api_url_entry.delete(0, tk.END)
+            api_url_entry.insert(0, preset.get("api_url", ""))
+            api_key_entry.delete(0, tk.END)
+            api_key_entry.insert(0, preset.get("api_key", ""))
+            model_entry.delete(0, tk.END)
+            model_entry.insert(0, preset.get("model", ""))
+
+        def on_preset_selected(choice):
+            if choice == MANUAL_PRESET:
+                return
+            preset = next((p for p in api_presets_local if p["name"] == choice), None)
+            if preset:
+                fill_api_fields(preset)
+
+        preset_menu = ctk.CTkOptionMenu(
+            preset_row,
+            variable=preset_var,
+            values=get_preset_values(),
+            command=on_preset_selected,
+            width=220,
+        )
+        preset_menu.pack(side=tk.LEFT, padx=(0, 5))
+
+        def refresh_preset_menu(select_name=None):
+            values = get_preset_values()
+            preset_menu.configure(values=values)
+            if select_name and select_name in values:
+                preset_var.set(select_name)
+            elif preset_var.get() not in values:
+                preset_var.set(MANUAL_PRESET)
+
+        preset_btn_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        preset_btn_row.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def save_api_preset():
+            name = simpledialog.askstring("Сохранить конфигурацию", "Название конфигурации:", parent=win)
+            if not name or not name.strip():
+                return
+            name = name.strip()
+            preset_data = {
+                "name": name,
+                "api_url": api_url_entry.get().strip(),
+                "api_key": api_key_entry.get().strip(),
+                "model": model_entry.get().strip(),
+            }
+            existing_idx = next((i for i, p in enumerate(api_presets_local) if p["name"] == name), None)
+            if existing_idx is not None:
+                api_presets_local[existing_idx] = preset_data
+            else:
+                api_presets_local.append(preset_data)
+            refresh_preset_menu(select_name=name)
+            self.add_system_message(f"💾 Конфигурация API «{name}» сохранена.")
+
+        def delete_api_preset():
+            choice = preset_var.get()
+            if choice == MANUAL_PRESET:
+                messagebox.showinfo("Удаление", "Выберите сохранённую конфигурацию для удаления.", parent=win)
+                return
+            if not messagebox.askyesno("Удалить конфигурацию", f"Удалить конфигурацию «{choice}»?", parent=win):
+                return
+            api_presets_local[:] = [p for p in api_presets_local if p["name"] != choice]
+            refresh_preset_menu()
+            preset_var.set(MANUAL_PRESET)
+
+        ctk.CTkButton(preset_btn_row, text="💾 Сохранить как...", width=140, command=save_api_preset).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        ctk.CTkButton(
+            preset_btn_row, text="🗑 Удалить", width=100, fg_color=COLORS["danger"], hover_color=COLORS["danger_hover"], command=delete_api_preset
+        ).pack(side=tk.LEFT)
+
+        ctk.CTkLabel(scroll, text="URL API (Chat Completions):").pack(anchor=tk.W, padx=10, pady=(5, 0))
         api_url_entry.pack(fill=ctk.X, padx=10, pady=(5, 10))
         api_url_entry.insert(0, self.api_url)
 
         ctk.CTkLabel(scroll, text="API-ключ (необязательно):").pack(anchor=tk.W, padx=10)
-        api_key_entry = ctk.CTkEntry(scroll, placeholder_text="sk-...", show="*")
-        api_key_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
+        api_key_entry.pack(fill=ctk.X, padx=10, pady=(5, 10))
         api_key_entry.insert(0, self.api_key)
 
         show_key_var = ctk.BooleanVar(value=False)
@@ -554,6 +645,10 @@ class DialogMixin:
         ctk.CTkCheckBox(scroll, text="Показать ключ", variable=show_key_var, command=toggle_key_visibility).pack(
             anchor=tk.W, padx=10, pady=(0, 10)
         )
+
+        ctk.CTkLabel(scroll, text="Модель (необязательно):").pack(anchor=tk.W, padx=10)
+        model_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
+        model_entry.insert(0, self.model)
 
         ctk.CTkLabel(scroll, text="Параметры генерации", font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
 
@@ -610,6 +705,10 @@ class DialogMixin:
             if api_url:
                 self.api_url = api_url
             self.api_key = api_key_entry.get().strip()
+            self.model = model_entry.get().strip()
+            self.api_presets = [dict(p) for p in api_presets_local]
+            selected_preset = preset_var.get()
+            self.active_api_preset = selected_preset if selected_preset != MANUAL_PRESET else ""
             self.stream_mode = stream_var.get()
             self.summary_enabled = summary_enabled_var.get()
             self.memory_enabled = memory_enabled_var.get()
@@ -635,8 +734,10 @@ class DialogMixin:
             self.update_toggle_buttons()
             self.update_summary_label()
             self.update_memory_label()
+            model_info = f", модель: {self.model}" if self.model else ""
+            preset_info = f", конфиг: {self.active_api_preset}" if self.active_api_preset else ""
             self.add_system_message(
-                f"⚙️ Настройки сохранены. API: {self.api_url}. "
+                f"⚙️ Настройки сохранены. API: {self.api_url}{model_info}{preset_info}. "
                 f"Стриминг: {'ВКЛ' if self.stream_mode else 'ВЫКЛ'}. "
                 f"Суммаризация: {'ВКЛ' if self.summary_enabled else 'ВЫКЛ'}. "
                 f"Память: {'ВКЛ' if self.memory_enabled else 'ВЫКЛ'}."
