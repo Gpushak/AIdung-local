@@ -14,3 +14,4 @@ App_finale/
 # Пользовательские данные
 worlds/
 !worlds/settings.example.json
+*.json
