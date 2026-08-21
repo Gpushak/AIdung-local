@@ -1,6 +1,32 @@
 import json
 
-from .config import BASE_DIR, DEFAULT_API_URL, SETTINGS_FILE, WORLD_FILES
+from .config import BASE_DIR, DEFAULT_API_URL, INTRODUCTION_FILE, INTRODUCTION_PREFIX, SETTINGS_FILE, WORLD_FILES
+
+
+def format_introduction_history(intro_text):
+    intro_text = intro_text.strip()
+    return f"{INTRODUCTION_PREFIX} {intro_text}" if intro_text else None
+
+
+def ensure_introduction_in_history(world_path, history):
+    history = list(history)
+    intro_path = world_path / INTRODUCTION_FILE
+    if not intro_path.exists():
+        return history
+
+    intro_text = intro_path.read_text(encoding="utf-8").strip()
+    intro_msg = format_introduction_history(intro_text)
+
+    if not intro_msg:
+        if history and history[0].startswith(INTRODUCTION_PREFIX):
+            return history[1:]
+        return history
+
+    if history and history[0].startswith(INTRODUCTION_PREFIX):
+        history[0] = intro_msg
+    else:
+        history.insert(0, intro_msg)
+    return history
 
 
 def get_world_list():

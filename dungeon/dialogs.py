@@ -5,8 +5,8 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
-from .config import BASE_DIR, COLORS, DEFAULT_TEMPLATES, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
-from .storage import get_world_list, save_history, save_world_files
+from .config import BASE_DIR, COLORS, DEFAULT_TEMPLATES, INTRODUCTION_FILE, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
+from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .story_cards import (
     default_story_cards,
     format_triggers,
@@ -125,7 +125,9 @@ class DialogMixin:
             world_path = BASE_DIR / name
             save_world_files(world_path, content)
             save_story_cards(world_path, new_world_cards)
-            save_history(world_path, [])
+            intro = content.get(INTRODUCTION_FILE, "").strip()
+            initial_history = [format_introduction_history(intro)] if intro else []
+            save_history(world_path, initial_history)
             win.destroy()
             self.load_world(name)
             self.refresh_world_combobox()
@@ -522,7 +524,59 @@ class DialogMixin:
         self.file_editor_original_content = content.strip()
         self.file_editor._textbox.edit_modified(False)
         self.update_unsaved_indicator()
+        if self.current_editing_file == INTRODUCTION_FILE:
+            self.sync_introduction_to_history(content.strip())
         self.add_system_message(f"✅ Файл {self.current_editing_file} сохранён")
+
+    def prompt_next_turn(self):
+        if self.is_busy() or not self.current_world_path:
+            return
+
+        win = ctk.CTkToplevel(self.root)
+        win.title("❓ Дальше?")
+        win.geometry("520x280")
+        win.transient(self.root)
+        win.grab_set()
+
+        ctk.CTkLabel(
+            win,
+            text="Опишите, что должно произойти в следующем ходу.\nИИ реализует это в повествовании.",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=20, pady=(20, 10))
+
+        direction_box = ctk.CTkTextbox(win, height=120, wrap=tk.WORD, font=ctk.CTkFont(size=14))
+        direction_box.pack(fill=ctk.BOTH, expand=True, padx=20, pady=(0, 10))
+        direction_box.focus()
+
+        btn_frame = ctk.CTkFrame(win, fg_color="transparent")
+        btn_frame.pack(fill=ctk.X, padx=20, pady=(0, 15))
+
+        def submit_direction():
+            direction = direction_box.get("1.0", tk.END).strip()
+            if not direction:
+                messagebox.showwarning("Пустой ввод", "Опишите, что должно произойти дальше.", parent=win)
+                return
+            win.destroy()
+            self.add_player_message(f"❓ {direction}")
+            self._dispatch_turn(self.process_action, ("",), {"direction_hint": direction})
+
+        def handle_enter(event):
+            if event.state & 0x1:
+                return
+            submit_direction()
+            return "break"
+
+        direction_box.bind("<Return>", handle_enter)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="▶ Отправить",
+            command=submit_direction,
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["button_hover"],
+            text_color="black",
+        ).pack(side=ctk.LEFT, padx=(0, 5))
+        ctk.CTkButton(btn_frame, text="Отмена", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
     def open_ai_settings(self):
         MANUAL_PRESET = "— Вручную —"

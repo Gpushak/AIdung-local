@@ -5,11 +5,13 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .ai_engine import AIEngineMixin
-from .config import BASE_DIR, COLORS, WINDOW_SIZE, WINDOW_TITLE
+from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, INTRODUCTION_PREFIX, WINDOW_SIZE, WINDOW_TITLE
 from .dialogs import DialogMixin
 from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
 from .story_cards import load_story_cards
 from .storage import (
+    ensure_introduction_in_history,
+    format_introduction_history,
     get_world_list,
     load_global_settings,
     load_world_config,
@@ -185,36 +187,43 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
         self.text_area._textbox.tag_config("player", foreground=COLORS["player_color"], font=("Arial", 14, "bold"))
         self.text_area._textbox.tag_config("dm", foreground=COLORS["dm_color"], font=("Arial", 14))
+        self.text_area._textbox.tag_config("intro", foreground=COLORS["accent"], font=("Arial", 14, "italic"))
         self.text_area._textbox.tag_config("system", foreground=COLORS["system_color"], font=("Arial", 12, "italic"))
         self.text_area.configure(state="disabled")
 
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         button_frame.pack(fill=ctk.X, pady=(0, 10))
 
-        btn_args = {"height": 30, "font": ctk.CTkFont(size=12)}
-        ctk.CTkButton(
-            button_frame,
-            text="⏪ Отменить ход",
-            command=self.undo_action,
-            fg_color=COLORS["danger"],
-            hover_color=COLORS["danger_hover"],
-            **btn_args,
-        ).pack(side=ctk.RIGHT, padx=5)
-        ctk.CTkButton(button_frame, text="📝 Суммаризация", command=self.force_summary, **btn_args).pack(
-            side=ctk.RIGHT, padx=5
-        )
-        ctk.CTkButton(button_frame, text="✏️ Изменить", command=self.edit_last_dm_message, **btn_args).pack(
-            side=ctk.RIGHT, padx=5
-        )
-        ctk.CTkButton(button_frame, text="📋 Промпт", command=self.show_last_prompt, **btn_args).pack(
-            side=ctk.RIGHT, padx=5
-        )
-        ctk.CTkButton(button_frame, text="🧠 Память", command=self.show_memory_bank, **btn_args).pack(
-            side=ctk.RIGHT, padx=5
-        )
-        ctk.CTkButton(button_frame, text="🔁 Реролл", command=self.regenerate_action, **btn_args).pack(
-            side=ctk.RIGHT, padx=5
-        )
+        btn_args = {"height": 28, "font": ctk.CTkFont(size=11)}
+        row1 = ctk.CTkFrame(button_frame, fg_color="transparent")
+        row1.pack(fill=ctk.X, pady=(0, 4))
+        row2 = ctk.CTkFrame(button_frame, fg_color="transparent")
+        row2.pack(fill=ctk.X)
+
+        row1_commands = [
+            ("❓ Дальше?", self.prompt_next_turn),
+            ("🔁 Реролл", self.regenerate_action),
+            ("✏️ Изменить", self.edit_last_dm_message),
+            ("📋 Промпт", self.show_last_prompt),
+        ]
+        row2_commands = [
+            ("📝 Суммаризация", self.force_summary),
+            ("🧠 Память", self.show_memory_bank),
+            ("⏪ Отменить ход", self.undo_action),
+        ]
+
+        for text, cmd in row1_commands:
+            ctk.CTkButton(row1, text=text, command=cmd, **btn_args).pack(
+                side=ctk.LEFT, padx=3, expand=True, fill=ctk.X
+            )
+
+        for text, cmd in row2_commands:
+            btn_kwargs = dict(btn_args)
+            if cmd == self.undo_action:
+                btn_kwargs.update(fg_color=COLORS["danger"], hover_color=COLORS["danger_hover"])
+            ctk.CTkButton(row2, text=text, command=cmd, **btn_kwargs).pack(
+                side=ctk.LEFT, padx=3, expand=True, fill=tk.X
+            )
 
         input_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         input_frame.pack(fill=ctk.X)
@@ -292,6 +301,9 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 elif msg.startswith("Мастер:"):
                     dm_text = msg[len("Мастер:") :].strip()
                     self.text_area.insert(tk.END, f"\n📜 {dm_text}\n", "dm")
+                elif msg.startswith(INTRODUCTION_PREFIX):
+                    intro_text = msg[len(INTRODUCTION_PREFIX) :].strip()
+                    self.text_area.insert(tk.END, f"\n📖 {intro_text}\n", "intro")
                 else:
                     self.text_area.insert(tk.END, f"\n{msg}\n", "system")
         self.text_area.configure(state="disabled")
@@ -375,7 +387,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.world_name = world_name
         self.turns_since_summary = 0
         self.last_sent_prompt = None
-        _, self.history = load_world_config(world_name)
+        _, loaded_history = load_world_config(world_name)
+        self.history = ensure_introduction_in_history(world_path, loaded_history)
+        if self.history != loaded_history:
+            save_history(world_path, self.history)
         self.memory_bank = load_memory_bank(world_path)
         self.story_cards = load_story_cards(world_path)
         current_turns = count_completed_turns(self.history)
@@ -430,6 +445,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if user_input:
             self.add_player_message(user_input)
 
+        self._dispatch_turn(self.process_action, (user_input,))
+
+    def _dispatch_turn(self, target, args=(), kwargs=None):
+        kwargs = kwargs or {}
         if self.summary_enabled:
             self.turns_since_summary += 1
         if self.memory_enabled:
@@ -440,7 +459,19 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             self.update_memory_label()
         self.processing = True
         self.refresh_busy_state()
-        Thread(target=self.process_action, args=(user_input,), daemon=True).start()
+        Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
+
+    def sync_introduction_to_history(self, intro_text):
+        intro_msg = format_introduction_history(intro_text)
+        if self.history and self.history[0].startswith(INTRODUCTION_PREFIX):
+            if intro_msg:
+                self.history[0] = intro_msg
+            else:
+                self.history.pop(0)
+        elif intro_msg:
+            self.history.insert(0, intro_msg)
+        save_history(self.current_world_path, self.history)
+        self.refresh_chat_display()
 
     def start_dm_stream(self):
         self.text_area.configure(state="normal")

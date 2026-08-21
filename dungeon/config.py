@@ -12,11 +12,15 @@ else:
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 WORLD_FILES = {
+    "introduction.txt": "Вступление",
     "ai_instructions.txt": "Инструкции ИИ",
     "plot_basics.txt": "Основы сюжета",
     "author_notes.txt": "Авторские пометки",
     "summary.txt": "Краткое содержание",
 }
+
+INTRODUCTION_FILE = "introduction.txt"
+INTRODUCTION_PREFIX = "Вступление:"
 
 STORY_CARDS_KEY = "__story_cards__"
 STORY_CARDS_LABEL = "Карточки историй"
@@ -34,6 +38,7 @@ COLORS = {
 }
 
 DEFAULT_TEMPLATES = {
+    "introduction.txt": "Вы — искатель приключений в мире фэнтези. История начинается здесь: опишите стартовую сцену, обстановку и с чего начинается приключение.",
     "ai_instructions.txt": """Ты - ИИ мастер, который предоставляет любой контент для ролевых игр.
 Инструкции, которые ты (Мастер) обязан соблюдать при написании:
 - '!!' Двигай сюжет, не зацикливайся на одной сцене.

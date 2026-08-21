@@ -6,7 +6,7 @@ from threading import Thread
 
 import requests
 
-from .config import WORLD_FILES
+from .config import INTRODUCTION_FILE, INTRODUCTION_PREFIX, WORLD_FILES
 from .memory import (
     count_completed_turns,
     format_memory_block,
@@ -124,14 +124,27 @@ class AIEngineMixin:
             self.memory_indexing = False
             self.root.after(0, self.refresh_busy_state)
 
-    def process_action(self, user_input):
+    def process_action(self, user_input="", direction_hint=None):
         try:
-            if user_input and (not self.history or f"Игрок: {user_input}" != self.history[-1]):
-                self.history.append(f"Игрок: {user_input}")
+            if direction_hint:
+                direction_hint = direction_hint.strip()
+                history_label = f"❓ {direction_hint}"
+                if direction_hint and (
+                    not self.history or f"Игрок: {history_label}" != self.history[-1]
+                ):
+                    self.history.append(f"Игрок: {history_label}")
+                user_content = f"""Автор задаёт направление следующего хода:
+{direction_hint}
+
+Реализуй это в повествовании органично, сохраняя стиль, контекст и правила мира. Не упоминай, что это «задание от автора» — просто развивай сюжет."""
+            else:
+                if user_input and (not self.history or f"Игрок: {user_input}" != self.history[-1]):
+                    self.history.append(f"Игрок: {user_input}")
+                user_content = user_input if user_input else "(Продолжай повествование.)"
 
             context = ""
             for fname in WORLD_FILES:
-                if fname == "summary.txt":
+                if fname in ("summary.txt", INTRODUCTION_FILE):
                     continue
                 path = self.current_world_path / fname
                 if path.exists():
@@ -143,8 +156,6 @@ class AIEngineMixin:
             summary_content = summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else ""
             if summary_content:
                 context += f"=== Сжатая хроника прошлых событий (summary.txt) ===\n{summary_content}\n"
-
-            user_content = user_input if user_input else "(Продолжай повествование.)"
 
             preview_msgs = []
             preview_tokens = 0
@@ -185,7 +196,7 @@ class AIEngineMixin:
             short_history = []
             current_history_tokens = 0
 
-            history_pool = self.history[:-1] if user_input else self.history
+            history_pool = self.history[:-1] if (user_input or direction_hint) else self.history
             for msg in reversed(history_pool):
                 msg_tokens = count_tokens(msg) + 1
                 if current_history_tokens + msg_tokens <= available_history_tokens:
