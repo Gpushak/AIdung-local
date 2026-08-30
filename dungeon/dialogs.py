@@ -5,7 +5,8 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
-from .config import BASE_DIR, COLORS, DEFAULT_TEMPLATES, INTRODUCTION_FILE, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
+from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
+from .i18n import default_templates, t
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .story_cards import (
     default_story_cards,
@@ -20,12 +21,12 @@ from .story_cards import (
 class DialogMixin:
     def manage_worlds(self):
         win = ctk.CTkToplevel(self.root)
-        win.title("🔄 Управление мирами")
+        win.title(self.tr("dialog.manage_worlds"))
         win.geometry("500x400")
         win.transient(self.root)
         win.grab_set()
 
-        ctk.CTkLabel(win, text="Ваши миры:", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+        ctk.CTkLabel(win, text=self.tr("dialog.your_worlds"), font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
 
         listbox = tk.Listbox(
             win,
@@ -58,7 +59,7 @@ class DialogMixin:
             if not sel:
                 return
             name = listbox.get(sel[0])
-            if messagebox.askyesno("Удалить мир", f"Удалить мир '{name}' безвозвратно?"):
+            if messagebox.askyesno(self.tr("dialog.delete_world"), self.tr("dialog.delete_world_q", name=name)):
                 shutil.rmtree(BASE_DIR / name)
                 listbox.delete(sel[0])
                 if self.world_name == name:
@@ -73,45 +74,46 @@ class DialogMixin:
                     self.update_memory_label()
                     self.refresh_chat_display()
 
-        ctk.CTkButton(btn_frame, text="Загрузить", command=switch_to_world).pack(side=ctk.LEFT, padx=5)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.load"), command=switch_to_world).pack(side=ctk.LEFT, padx=5)
         ctk.CTkButton(
             btn_frame,
-            text="Удалить",
+            text=self.tr("btn.delete"),
             command=delete_world,
             fg_color=COLORS["danger"],
             hover_color=COLORS["danger_hover"],
         ).pack(side=ctk.LEFT, padx=5)
-        ctk.CTkButton(btn_frame, text="Создать", command=lambda: [win.destroy(), self.create_world_dialog()]).pack(
+        ctk.CTkButton(btn_frame, text=self.tr("btn.create"), command=lambda: [win.destroy(), self.create_world_dialog()]).pack(
             side=ctk.LEFT, padx=5
         )
-        ctk.CTkButton(btn_frame, text="Закрыть", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT, padx=5)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.close"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT, padx=5)
 
     def create_world_dialog(self):
         win = ctk.CTkToplevel(self.root)
-        win.title("🔄 Создать новый мир")
+        win.title(self.tr("dialog.create_world"))
         win.geometry("750x700")
         win.transient(self.root)
         win.grab_set()
 
-        ctk.CTkLabel(win, text="Название мира (папка):").pack(pady=(10, 0))
+        ctk.CTkLabel(win, text=self.tr("dialog.world_name")).pack(pady=(10, 0))
         name_entry = ctk.CTkEntry(win, width=300)
         name_entry.pack(pady=5)
-        name_entry.insert(0, "Новый мир")
+        name_entry.insert(0, self.tr("dialog.default_world_name"))
 
         tabview = ctk.CTkTabview(win)
         tabview.pack(fill=ctk.BOTH, expand=True, padx=15, pady=5)
         tabs = {}
-        new_world_cards = default_story_cards()
+        new_world_cards = default_story_cards(self.language)
 
+        templates = default_templates(self.language)
         for fname, desc in WORLD_FILES.items():
-            tab = tabview.add(desc)
+            tab = tabview.add(self.tr(f"world_file.{fname}"))
             text_widget = ctk.CTkTextbox(tab, wrap=tk.WORD)
             text_widget.pack(fill=ctk.BOTH, expand=True, padx=5, pady=5)
-            text_widget.insert("1.0", DEFAULT_TEMPLATES.get(fname, ""))
+            text_widget.insert("1.0", templates.get(fname, ""))
             text_widget.bind("<Button-3>", self.show_context_menu)
             tabs[fname] = text_widget
 
-        cards_tab = tabview.add(STORY_CARDS_LABEL)
+        cards_tab = tabview.add(self.tr("world_file.story_cards"))
         cards_tab_frame = ctk.CTkFrame(cards_tab, fg_color="transparent")
         cards_tab_frame.pack(fill=ctk.BOTH, expand=True, padx=5, pady=5)
         cards_editor = self._embed_story_cards_editor(
@@ -121,7 +123,7 @@ class DialogMixin:
         def apply_new_world():
             name = name_entry.get().strip()
             if not name or (BASE_DIR / name).exists():
-                messagebox.showerror("Ошибка", "Некорректное или занятое имя")
+                messagebox.showerror(self.tr("dialog.bad_name"), self.tr("dialog.bad_name_msg"))
                 return
             cards_editor["save"]()
             content = {fname: w.get("1.0", tk.END).strip() for fname, w in tabs.items()}
@@ -138,15 +140,15 @@ class DialogMixin:
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, pady=15, padx=15)
         ctk.CTkButton(
-            btn_frame, text="✅ Создать", command=apply_new_world, fg_color=COLORS["accent"], text_color="black"
+            btn_frame, text=self.tr("btn.create_ok"), command=apply_new_world, fg_color=COLORS["accent"], text_color="black"
         ).pack(side=ctk.LEFT, padx=5)
-        ctk.CTkButton(btn_frame, text="❌ Отмена", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT, padx=5)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.cancel"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT, padx=5)
 
     def open_world_files(self):
         if not self.current_world_path:
             return
         win = ctk.CTkToplevel(self.root)
-        win.title("📁 Файлы мира")
+        win.title(self.tr("dialog.world_files"))
         win.geometry("800x550")
         win.transient(self.root)
         win.grab_set()
@@ -160,7 +162,7 @@ class DialogMixin:
         left_frame.pack(side=ctk.LEFT, fill=ctk.Y, padx=10, pady=10)
         left_frame.pack_propagate(False)
 
-        ctk.CTkLabel(left_frame, text="Выберите файл:", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+        ctk.CTkLabel(left_frame, text=self.tr("dialog.choose_file"), font=ctk.CTkFont(weight="bold")).pack(pady=5)
 
         self.file_listbox = tk.Listbox(
             left_frame,
@@ -201,7 +203,7 @@ class DialogMixin:
         btn_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, pady=10, padx=10)
 
-        self.file_save_btn = ctk.CTkButton(btn_frame, text="💾 Сохранить", command=self.save_current_file)
+        self.file_save_btn = ctk.CTkButton(btn_frame, text=self.tr("btn.save"), command=self.save_current_file)
         self.file_save_btn.pack(side=ctk.LEFT, padx=5)
         self.unsaved_label = ctk.CTkLabel(btn_frame, text="", text_color=COLORS["accent"])
         self.unsaved_label.pack(side=ctk.LEFT, padx=10)
@@ -229,7 +231,7 @@ class DialogMixin:
         if not hasattr(self, "unsaved_label") or not self.unsaved_label.winfo_exists():
             return
         if self.has_unsaved_file_changes():
-            self.unsaved_label.configure(text="● Есть несохранённые изменения")
+            self.unsaved_label.configure(text=self.tr("dialog.unsaved"))
         else:
             self.unsaved_label.configure(text="")
 
@@ -238,10 +240,10 @@ class DialogMixin:
         left.pack(side=ctk.LEFT, fill=ctk.Y, padx=(0, 8))
         left.pack_propagate(False)
 
-        ctk.CTkLabel(left, text="Карточки:", font=ctk.CTkFont(weight="bold")).pack(pady=(0, 5))
+        ctk.CTkLabel(left, text=self.tr("cards.list"), font=ctk.CTkFont(weight="bold")).pack(pady=(0, 5))
 
         search_var = ctk.StringVar()
-        search_entry = ctk.CTkEntry(left, textvariable=search_var, placeholder_text="Поиск карточек...")
+        search_entry = ctk.CTkEntry(left, textvariable=search_var, placeholder_text=self.tr("cards.search"))
         search_entry.pack(fill=tk.X, pady=(0, 5))
 
         list_frame = ctk.CTkFrame(left, fg_color="transparent")
@@ -266,25 +268,25 @@ class DialogMixin:
         right = ctk.CTkFrame(parent, fg_color="transparent")
         right.pack(side=ctk.RIGHT, fill=ctk.BOTH, expand=True)
 
-        ctk.CTkLabel(right, text="Название:").pack(anchor=tk.W, padx=5)
+        ctk.CTkLabel(right, text=self.tr("cards.title")).pack(anchor=tk.W, padx=5)
         title_entry = ctk.CTkEntry(right)
         title_entry.pack(fill=ctk.X, padx=5, pady=(0, 8))
 
-        ctk.CTkLabel(right, text="Описание:").pack(anchor=tk.W, padx=5)
+        ctk.CTkLabel(right, text=self.tr("cards.desc")).pack(anchor=tk.W, padx=5)
         desc_text = ctk.CTkTextbox(right, wrap=tk.WORD, height=180)
         desc_text.pack(fill=ctk.BOTH, expand=True, padx=5, pady=(0, 8))
         desc_text.bind("<Button-3>", self.show_context_menu)
 
         ctk.CTkLabel(
             right,
-            text="Триггеры (через запятую — ключевые слова для подтягивания карточки):",
+            text=self.tr("cards.triggers"),
         ).pack(anchor=tk.W, padx=5)
-        triggers_entry = ctk.CTkEntry(right, placeholder_text="арион, таверна, меч")
+        triggers_entry = ctk.CTkEntry(right, placeholder_text=self.tr("cards.triggers_ph"))
         triggers_entry.pack(fill=ctk.X, padx=5, pady=(0, 8))
 
         hint = ctk.CTkLabel(
             right,
-            text="Пустые триггеры = карточка всегда активна в промпте",
+            text=self.tr("cards.empty_triggers"),
             text_color="gray",
             font=ctk.CTkFont(size=11),
         )
@@ -309,7 +311,7 @@ class DialogMixin:
                 ).lower()
                 if query and query not in searchable_text:
                     continue
-                card_listbox.insert(tk.END, card.get("title", "Без названия"))
+                card_listbox.insert(tk.END, card.get("title", self.tr("cards.untitled")))
                 state["visible_indices"].append(index)
 
             if select_index in state["visible_indices"]:
@@ -349,7 +351,7 @@ class DialogMixin:
             idx = state["selected_index"]
             if idx < 0 or idx >= len(cards):
                 return
-            cards[idx]["title"] = title_entry.get().strip() or "Без названия"
+            cards[idx]["title"] = title_entry.get().strip() or self.tr("cards.untitled")
             cards[idx]["description"] = desc_text.get("1.0", tk.END).strip()
             cards[idx]["triggers"] = parse_triggers(triggers_entry.get())
             refresh_list(select_index=idx)
@@ -365,7 +367,7 @@ class DialogMixin:
             apply_current_card()
             new_card = {
                 "id": next_card_id(cards_data.get("cards", [])),
-                "title": "Новая карточка",
+                "title": self.tr("cards.new"),
                 "description": "",
                 "triggers": [],
             }
@@ -377,7 +379,7 @@ class DialogMixin:
             if not sel:
                 return
             idx = sel[0]
-            if not messagebox.askyesno("Удалить", "Удалить выбранную карточку?"):
+            if not messagebox.askyesno(self.tr("cards.delete"), self.tr("cards.delete_q")):
                 return
             cards_data["cards"].pop(idx)
             refresh_list(select_index=min(idx, len(cards_data.get("cards", [])) - 1) if cards_data.get("cards") else None)
@@ -391,16 +393,16 @@ class DialogMixin:
             elif self.current_world_path:
                 save_story_cards(self.current_world_path, cards_data)
                 self.story_cards = cards_data
-                self.add_system_message("✅ Карточки историй сохранены")
+                self.add_system_message(self.tr("msg.cards_saved"))
 
         card_listbox.bind("<<ListboxSelect>>", on_card_select)
         search_var.trace_add("write", lambda *_: refresh_list(state["selected_index"]))
 
         if editable:
-            ctk.CTkButton(btn_row, text="➕ Добавить", command=add_card, width=100).pack(side=ctk.LEFT, padx=3)
+            ctk.CTkButton(btn_row, text=self.tr("btn.add"), command=add_card, width=100).pack(side=ctk.LEFT, padx=3)
             ctk.CTkButton(
                 btn_row,
-                text="🗑 Удалить",
+                text=self.tr("btn.delete_icon"),
                 command=delete_card,
                 fg_color=COLORS["danger"],
                 hover_color=COLORS["danger_hover"],
@@ -409,7 +411,7 @@ class DialogMixin:
             if persist:
                 ctk.CTkButton(
                     btn_row,
-                    text="💾 Сохранить",
+                    text=self.tr("btn.save"),
                     command=save_cards,
                     fg_color=COLORS["accent"],
                     text_color="black",
@@ -418,7 +420,7 @@ class DialogMixin:
             else:
                 ctk.CTkLabel(
                     btn_row,
-                    text="Сохранятся вместе с миром",
+                    text=self.tr("cards.save_with_world"),
                     text_color="gray",
                     font=ctk.CTkFont(size=11),
                 ).pack(side=ctk.RIGHT, padx=3)
@@ -428,11 +430,11 @@ class DialogMixin:
 
     def open_story_cards_editor(self):
         if not self.current_world_path:
-            messagebox.showinfo("Карточки историй", "Сначала выберите или создайте мир.")
+            messagebox.showinfo(self.tr("dialog.cards_title"), self.tr("dialog.cards_need_world"))
             return
 
         win = ctk.CTkToplevel(self.root)
-        win.title("📇 Карточки историй")
+        win.title(self.tr("dialog.cards_title"))
         win.geometry("850x600")
         win.transient(self.root)
         win.grab_set()
@@ -447,7 +449,7 @@ class DialogMixin:
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, padx=15, pady=10)
-        ctk.CTkButton(btn_frame, text="❌ Закрыть", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
         win.protocol("WM_DELETE_WINDOW", win.destroy)
 
@@ -505,9 +507,9 @@ class DialogMixin:
             return
 
         old_fname = self.current_editing_file
-        old_label = STORY_CARDS_LABEL if old_fname == STORY_CARDS_KEY else WORLD_FILES.get(old_fname, old_fname)
+        old_label = self.tr("world_file.story_cards") if old_fname == STORY_CARDS_KEY else self.tr(f"world_file.{old_fname}")
         choice = messagebox.askyesnocancel(
-            "Внимание", f"В файле «{old_label}» есть изменения. Сохранить?"
+            self.tr("dialog.attention"), self.tr("dialog.file_unsaved", label=old_label)
         )
         if choice is None:
             self.file_listbox.selection_clear(0, tk.END)
@@ -520,7 +522,7 @@ class DialogMixin:
 
     def close_files_window(self):
         if self.has_unsaved_file_changes():
-            choice = messagebox.askyesnocancel("Внимание", "Есть несохранённые изменения. Сохранить перед закрытием?")
+            choice = messagebox.askyesnocancel(self.tr("dialog.attention"), self.tr("dialog.close_unsaved"))
             if choice is None:
                 return
             elif choice:
@@ -539,21 +541,21 @@ class DialogMixin:
         self.update_unsaved_indicator()
         if self.current_editing_file == INTRODUCTION_FILE:
             self.sync_introduction_to_history(content.strip())
-        self.add_system_message(f"✅ Файл {self.current_editing_file} сохранён")
+        self.add_system_message(self.tr("msg.file_saved", name=self.current_editing_file))
 
     def prompt_next_turn(self):
         if self.is_busy() or not self.current_world_path:
             return
 
         win = ctk.CTkToplevel(self.root)
-        win.title("❓ Дальше?")
+        win.title(self.tr("dialog.next_title"))
         win.geometry("520x280")
         win.transient(self.root)
         win.grab_set()
 
         ctk.CTkLabel(
             win,
-            text="Опишите, что должно произойти в следующем ходу.\nИИ реализует это в повествовании.",
+            text=self.tr("dialog.next_hint"),
             justify=tk.LEFT,
         ).pack(anchor=tk.W, padx=20, pady=(20, 10))
 
@@ -567,7 +569,7 @@ class DialogMixin:
         def submit_direction():
             direction = direction_box.get("1.0", tk.END).strip()
             if not direction:
-                messagebox.showwarning("Пустой ввод", "Опишите, что должно произойти дальше.", parent=win)
+                messagebox.showwarning(self.tr("dialog.empty_input"), self.tr("dialog.empty_next"), parent=win)
                 return
             win.destroy()
             self.add_player_message(f"❓ {direction}")
@@ -583,19 +585,19 @@ class DialogMixin:
 
         ctk.CTkButton(
             btn_frame,
-            text="▶ Отправить",
+            text=self.tr("btn.send"),
             command=submit_direction,
             fg_color=COLORS["accent"],
             hover_color=COLORS["button_hover"],
             text_color="black",
         ).pack(side=ctk.LEFT, padx=(0, 5))
-        ctk.CTkButton(btn_frame, text="Отмена", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.cancel_plain"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
     def open_ai_settings(self):
-        MANUAL_PRESET = "— Вручную —"
+        MANUAL_PRESET = self.tr("dialog.manual_preset")
 
         win = ctk.CTkToplevel(self.root)
-        win.title("⚙️ Настройки ИИ")
+        win.title(self.tr("dialog.ai_settings"))
         win.geometry("450x950")
         win.transient(self.root)
         win.grab_set()
@@ -605,7 +607,7 @@ class DialogMixin:
 
         api_presets_local = [dict(p) for p in self.api_presets]
 
-        ctk.CTkLabel(scroll, text="Конфигурация API", font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 0))
+        ctk.CTkLabel(scroll, text=self.tr("dialog.api_config"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 0))
 
         preset_row = ctk.CTkFrame(scroll, fg_color="transparent")
         preset_row.pack(fill=tk.X, padx=10, pady=(5, 5))
@@ -660,7 +662,7 @@ class DialogMixin:
         preset_btn_row.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         def save_api_preset():
-            name = simpledialog.askstring("Сохранить конфигурацию", "Название конфигурации:", parent=win)
+            name = simpledialog.askstring(self.tr("dialog.save_preset"), self.tr("dialog.preset_name"), parent=win)
             if not name or not name.strip():
                 return
             name = name.strip()
@@ -676,31 +678,31 @@ class DialogMixin:
             else:
                 api_presets_local.append(preset_data)
             refresh_preset_menu(select_name=name)
-            self.add_system_message(f"💾 Конфигурация API «{name}» сохранена.")
+            self.add_system_message(self.tr("msg.preset_saved", name=name))
 
         def delete_api_preset():
             choice = preset_var.get()
             if choice == MANUAL_PRESET:
-                messagebox.showinfo("Удаление", "Выберите сохранённую конфигурацию для удаления.", parent=win)
+                messagebox.showinfo(self.tr("dialog.delete_preset_info"), self.tr("dialog.delete_preset_pick"), parent=win)
                 return
-            if not messagebox.askyesno("Удалить конфигурацию", f"Удалить конфигурацию «{choice}»?", parent=win):
+            if not messagebox.askyesno(self.tr("dialog.delete_preset"), self.tr("dialog.delete_preset_q", name=choice), parent=win):
                 return
             api_presets_local[:] = [p for p in api_presets_local if p["name"] != choice]
             refresh_preset_menu()
             preset_var.set(MANUAL_PRESET)
 
-        ctk.CTkButton(preset_btn_row, text="💾 Сохранить как...", width=140, command=save_api_preset).pack(
+        ctk.CTkButton(preset_btn_row, text=self.tr("btn.save_as"), width=140, command=save_api_preset).pack(
             side=tk.LEFT, padx=(0, 5)
         )
         ctk.CTkButton(
-            preset_btn_row, text="🗑 Удалить", width=100, fg_color=COLORS["danger"], hover_color=COLORS["danger_hover"], command=delete_api_preset
+            preset_btn_row, text=self.tr("btn.delete_icon"), width=100, fg_color=COLORS["danger"], hover_color=COLORS["danger_hover"], command=delete_api_preset
         ).pack(side=tk.LEFT)
 
-        ctk.CTkLabel(scroll, text="URL API (Chat Completions):").pack(anchor=tk.W, padx=10, pady=(5, 0))
+        ctk.CTkLabel(scroll, text=self.tr("dialog.api_url")).pack(anchor=tk.W, padx=10, pady=(5, 0))
         api_url_entry.pack(fill=ctk.X, padx=10, pady=(5, 10))
         api_url_entry.insert(0, self.api_url)
 
-        ctk.CTkLabel(scroll, text="API-ключ (необязательно):").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.api_key")).pack(anchor=tk.W, padx=10)
         api_key_entry.pack(fill=ctk.X, padx=10, pady=(5, 10))
         api_key_entry.insert(0, self.api_key)
 
@@ -709,24 +711,24 @@ class DialogMixin:
         def toggle_key_visibility():
             api_key_entry.configure(show="" if show_key_var.get() else "*")
 
-        ctk.CTkCheckBox(scroll, text="Показать ключ", variable=show_key_var, command=toggle_key_visibility).pack(
+        ctk.CTkCheckBox(scroll, text=self.tr("dialog.show_key"), variable=show_key_var, command=toggle_key_visibility).pack(
             anchor=tk.W, padx=10, pady=(0, 10)
         )
 
-        ctk.CTkLabel(scroll, text="Модель (необязательно):").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.model")).pack(anchor=tk.W, padx=10)
         model_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
         model_entry.insert(0, self.model)
 
-        ctk.CTkLabel(scroll, text="Параметры генерации", font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ctk.CTkLabel(scroll, text=self.tr("dialog.gen_params"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
 
         stream_var = ctk.BooleanVar(value=self.stream_mode)
         summary_enabled_var = ctk.BooleanVar(value=self.summary_enabled)
         memory_enabled_var = ctk.BooleanVar(value=self.memory_enabled)
-        ctk.CTkCheckBox(scroll, text="Потоковый ответ (Streaming)", variable=stream_var).pack(anchor=tk.W, padx=10, pady=(5, 10))
-        ctk.CTkCheckBox(scroll, text="Автосуммаризация", variable=summary_enabled_var).pack(anchor=tk.W, padx=10, pady=5)
-        ctk.CTkCheckBox(scroll, text="Банк памяти", variable=memory_enabled_var).pack(anchor=tk.W, padx=10, pady=(0, 10))
+        ctk.CTkCheckBox(scroll, text=self.tr("dialog.stream"), variable=stream_var).pack(anchor=tk.W, padx=10, pady=(5, 10))
+        ctk.CTkCheckBox(scroll, text=self.tr("dialog.auto_summary"), variable=summary_enabled_var).pack(anchor=tk.W, padx=10, pady=5)
+        ctk.CTkCheckBox(scroll, text=self.tr("dialog.memory_bank"), variable=memory_enabled_var).pack(anchor=tk.W, padx=10, pady=(0, 10))
 
-        ctk.CTkLabel(scroll, text="Температура (0.0 - 2.0):").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.temperature")).pack(anchor=tk.W, padx=10)
         temp_val_lbl = ctk.CTkLabel(scroll, text=f"{self.temperature:.1f}", text_color=COLORS["accent"])
         temp_val_lbl.pack(anchor=tk.E, padx=10)
 
@@ -737,12 +739,12 @@ class DialogMixin:
         temp_slider.set(self.temperature)
         temp_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(scroll, text="Макс. токенов в ответе:").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.max_tokens")).pack(anchor=tk.W, padx=10)
         tokens_entry = ctk.CTkEntry(scroll)
         tokens_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
         tokens_entry.insert(0, str(self.max_tokens))
 
-        ctk.CTkLabel(scroll, text="Размер контекста:").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.context_size")).pack(anchor=tk.W, padx=10)
         ctx_val_lbl = ctk.CTkLabel(scroll, text=f"{self.context_size}", text_color=COLORS["accent"])
         ctx_val_lbl.pack(anchor=tk.E, padx=10)
 
@@ -753,17 +755,17 @@ class DialogMixin:
         ctx_slider.set(self.context_size)
         ctx_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(scroll, text="Суммаризация (каждые N ходов):").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.summary_every")).pack(anchor=tk.W, padx=10)
         interval_var = ctk.StringVar(value=str(self.summary_interval))
         ctk.CTkOptionMenu(scroll, variable=interval_var, values=["5", "10", "15", "20"]).pack(anchor=tk.W, padx=10, pady=5)
 
-        ctk.CTkLabel(scroll, text="Банк памяти (индексация каждые N ходов):").pack(anchor=tk.W, padx=10, pady=(10, 0))
+        ctk.CTkLabel(scroll, text=self.tr("dialog.memory_every")).pack(anchor=tk.W, padx=10, pady=(10, 0))
         memory_interval_var = ctk.StringVar(value=str(self.memory_interval))
         ctk.CTkOptionMenu(scroll, variable=memory_interval_var, values=["3", "5", "10", "15"]).pack(
             anchor=tk.W, padx=10, pady=5
         )
 
-        ctk.CTkLabel(scroll, text="Макс. воспоминаний в промпте:").pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.memory_top_k")).pack(anchor=tk.W, padx=10)
         memory_top_k_var = ctk.StringVar(value=str(self.memory_top_k))
         ctk.CTkOptionMenu(scroll, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=10, pady=5)
 
@@ -801,20 +803,25 @@ class DialogMixin:
             self.update_toggle_buttons()
             self.update_summary_label()
             self.update_memory_label()
-            model_info = f", модель: {self.model}" if self.model else ""
-            preset_info = f", конфиг: {self.active_api_preset}" if self.active_api_preset else ""
+            model_info = self.tr("msg.model_part", model=self.model) if self.model else ""
+            preset_info = self.tr("msg.preset_part", name=self.active_api_preset) if self.active_api_preset else ""
             self.add_system_message(
-                f"⚙️ Настройки сохранены. API: {self.api_url}{model_info}{preset_info}. "
-                f"Стриминг: {'ВКЛ' if self.stream_mode else 'ВЫКЛ'}. "
-                f"Суммаризация: {'ВКЛ' if self.summary_enabled else 'ВЫКЛ'}. "
-                f"Память: {'ВКЛ' if self.memory_enabled else 'ВЫКЛ'}."
+                self.tr(
+                    "msg.settings_saved",
+                    api=self.api_url,
+                    model=model_info,
+                    preset=preset_info,
+                    stream=self.tr("on" if self.stream_mode else "off"),
+                    summary=self.tr("on" if self.summary_enabled else "off"),
+                    memory=self.tr("on" if self.memory_enabled else "off"),
+                )
             )
             win.destroy()
 
-        ctk.CTkButton(win, text="💾 Сохранить", command=apply_settings).pack(pady=10)
+        ctk.CTkButton(win, text=self.tr("btn.save"), command=apply_settings).pack(pady=10)
 
     def quit_app(self):
-        if messagebox.askyesno("Выход", "Действительно выйти из игры?"):
+        if messagebox.askyesno(self.tr("dialog.quit"), self.tr("dialog.quit_q")):
             self.on_closing()
 
     def edit_last_dm_message(self):
@@ -830,12 +837,12 @@ class DialogMixin:
 
         current_text = self.history[dm_index][len("Мастер:") :].strip()
         win = ctk.CTkToplevel(self.root)
-        win.title("✏️ Редактировать ответ")
+        win.title(self.tr("dialog.edit_dm"))
         win.geometry("600x500")
         win.transient(self.root)
         win.grab_set()
 
-        ctk.CTkLabel(win, text="Редактирование ответа:").pack(pady=(10, 5), anchor=tk.W, padx=15)
+        ctk.CTkLabel(win, text=self.tr("dialog.edit_dm_label")).pack(pady=(10, 5), anchor=tk.W, padx=15)
 
         editor = ctk.CTkTextbox(win, wrap=tk.WORD, font=ctk.CTkFont(size=14))
         editor.pack(fill=ctk.BOTH, expand=True, padx=15, pady=5)
@@ -851,26 +858,26 @@ class DialogMixin:
             save_history(self.current_world_path, self.history)
             self.refresh_chat_display()
             win.destroy()
-            self.add_system_message("📝 Ответ Мастера изменен.")
+            self.add_system_message(self.tr("msg.dm_edited"))
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, pady=15, padx=15)
         ctk.CTkButton(
-            btn_frame, text="✅ Сохранить", command=save_edited_msg, fg_color=COLORS["accent"], text_color="black"
+            btn_frame, text=self.tr("btn.save_ok"), command=save_edited_msg, fg_color=COLORS["accent"], text_color="black"
         ).pack(side=ctk.LEFT)
-        ctk.CTkButton(btn_frame, text="❌ Отмена", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.cancel"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
     def force_summary(self):
         if self.is_busy() or not self.current_world_path:
             return
         self.turns_since_summary = 0
         self.update_summary_label()
-        self.add_system_message("📝 Принудительное обновление краткого содержания...")
+        self.add_system_message(self.tr("msg.force_summary"))
         self.generate_global_summary()
 
     def show_last_prompt(self):
         if not self.last_sent_prompt:
-            messagebox.showinfo("Промпт", "Нет данных о запросе.")
+            messagebox.showinfo(self.tr("dialog.prompt_title"), self.tr("dialog.no_prompt"))
             return
 
         data = self.last_sent_prompt
@@ -882,7 +889,7 @@ class DialogMixin:
         )
 
         win = ctk.CTkToplevel(self.root)
-        win.title("📋 Последний промпт")
+        win.title(self.tr("dialog.prompt_title"))
         win.geometry("750x650")
         win.transient(self.root)
         win.grab_set()
@@ -895,32 +902,32 @@ class DialogMixin:
         def copy_to_clipboard():
             self.root.clipboard_clear()
             self.root.clipboard_append(full_text)
-            self.add_system_message("📋 Промпт скопирован.")
+            self.add_system_message(self.tr("msg.prompt_copied"))
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, padx=15, pady=(0, 15))
-        ctk.CTkButton(btn_frame, text="📋 Копировать", command=copy_to_clipboard).pack(side=ctk.LEFT)
-        ctk.CTkButton(btn_frame, text="❌ Закрыть", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.copy"), command=copy_to_clipboard).pack(side=ctk.LEFT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
     def show_memory_bank(self):
         if not self.current_world_path:
-            messagebox.showinfo("Память", "Мир не выбран.")
+            messagebox.showinfo(self.tr("dialog.memory_title"), self.tr("dialog.no_world"))
             return
 
         entries = self.memory_bank.get("entries", [])
         if not entries:
-            messagebox.showinfo("Память", "Банк памяти пуст. Записи появятся после нескольких ходов.")
+            messagebox.showinfo(self.tr("dialog.memory_title"), self.tr("dialog.memory_empty"))
             return
 
         win = ctk.CTkToplevel(self.root)
-        win.title("🧠 Банк памяти")
+        win.title(self.tr("dialog.memory_title"))
         win.geometry("750x650")
         win.transient(self.root)
         win.grab_set()
 
         ctk.CTkLabel(
             win,
-            text=f"Записей: {len(entries)} | Проиндексировано ходов: {self.memory_bank.get('last_indexed_turn', 0)}",
+            text=self.tr("dialog.memory_stats", n=len(entries), turns=self.memory_bank.get("last_indexed_turn", 0)),
             font=ctk.CTkFont(weight="bold"),
         ).pack(anchor=tk.W, padx=15, pady=(10, 5))
 
@@ -943,10 +950,10 @@ class DialogMixin:
 
         def force_index():
             win.destroy()
-            self.add_system_message("🧠 Принудительная индексация памяти...")
+            self.add_system_message(self.tr("msg.force_memory"))
             self.run_memory_indexing(force=True)
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, padx=15, pady=(0, 15))
-        ctk.CTkButton(btn_frame, text="🔄 Индексировать сейчас", command=force_index).pack(side=ctk.LEFT)
-        ctk.CTkButton(btn_frame, text="❌ Закрыть", command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.index_now"), command=force_index).pack(side=ctk.LEFT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)

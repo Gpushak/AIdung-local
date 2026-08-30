@@ -5,8 +5,21 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .ai_engine import AIEngineMixin
-from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, INTRODUCTION_PREFIX, WINDOW_SIZE, WINDOW_TITLE
+from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, WINDOW_SIZE
 from .dialogs import DialogMixin
+from .i18n import (
+    DM_PREFIX,
+    INTRO_PREFIX,
+    PLAYER_PREFIX,
+    dm_text,
+    intro_text,
+    is_dm_msg,
+    is_intro_msg,
+    is_player_msg,
+    normalize_lang,
+    player_text,
+    t,
+)
 from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
 from .story_cards import load_story_cards
 from .storage import (
@@ -23,7 +36,9 @@ from .storage import (
 class DungeonApp(DialogMixin, AIEngineMixin):
     def __init__(self, root):
         self.root = root
-        self.root.title(WINDOW_TITLE)
+        settings = load_global_settings()
+        self.language = normalize_lang(settings.get("language", "ru"))
+        self.root.title(t(self.language, "window_title"))
         self.root.geometry(WINDOW_SIZE)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -32,7 +47,6 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.world_name = None
         self.history = []
 
-        settings = load_global_settings()
         self.api_url = settings["api_url"]
         self.api_key = settings.get("api_key", "")
         self.model = settings.get("model", "")
@@ -71,6 +85,46 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             save_history(self.current_world_path, self.history)
         self.root.destroy()
 
+    def tr(self, key, **kwargs):
+        return t(self.language, key, **kwargs)
+
+    def world_file_label(self, fname):
+        if fname == STORY_CARDS_KEY:
+            return self.tr("world_file.story_cards")
+        return self.tr(f"world_file.{fname}")
+
+    def on_language_selected(self, value):
+        new_lang = "en" if str(value).upper().startswith("EN") else "ru"
+        if new_lang == self.language:
+            return
+        self.language = new_lang
+        self.save_global_settings()
+        self.apply_language()
+        self.add_system_message(self.tr("msg.language_changed", lang_name=self.tr(f"lang.{new_lang}")))
+
+    def apply_language(self):
+        self.root.title(self.tr("window_title"))
+        if hasattr(self, "title_label"):
+            self.title_label.configure(text=self.tr("app_title"))
+        if hasattr(self, "lang_var"):
+            self.lang_var.set("EN" if self.language == "en" else "RU")
+        for btn, key in getattr(self, "top_command_buttons", []):
+            btn.configure(text=self.tr(key))
+        for btn, key in getattr(self, "action_buttons", []):
+            btn.configure(text=self.tr(key))
+        if hasattr(self, "send_button"):
+            self.send_button.configure(text=self.tr("btn.send"))
+        if hasattr(self, "update_toggle_buttons"):
+            self.update_toggle_buttons()
+        if hasattr(self, "update_summary_label"):
+            self.update_summary_label()
+        if hasattr(self, "update_memory_label"):
+            self.update_memory_label()
+        if hasattr(self, "refresh_busy_state"):
+            self.refresh_busy_state()
+        if hasattr(self, "refresh_world_combobox"):
+            self.refresh_world_combobox()
+
     def save_global_settings(self):
         save_global_settings(
             {
@@ -88,27 +142,28 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 "stream_mode": self.stream_mode,
                 "summary_enabled": self.summary_enabled,
                 "memory_enabled": self.memory_enabled,
+                "language": self.language,
             }
         )
 
     def refresh_world_combobox(self):
         worlds = get_world_list()
         if not worlds:
-            worlds = ["Нет миров"]
+            worlds = [self.tr("no_worlds")]
 
         self.world_combobox.configure(values=worlds)
 
         if self.world_name and self.world_name in worlds:
             self.world_var.set(self.world_name)
-        elif worlds and worlds[0] != "Нет миров":
+        elif worlds and worlds[0] != self.tr("no_worlds"):
             first_world = worlds[0]
             self.world_var.set(first_world)
             self.load_world(first_world)
         else:
-            self.world_var.set("Нет миров")
+            self.world_var.set(self.tr("no_worlds"))
 
     def on_world_selected(self, selected):
-        if selected and selected != "Нет миров" and selected != self.world_name:
+        if selected and selected != self.tr("no_worlds") and selected != self.world_name:
             if self.current_world_path:
                 save_history(self.current_world_path, self.history)
             self.load_world(selected)
@@ -117,13 +172,26 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         main_frame.pack(fill=ctk.BOTH, expand=True, padx=15, pady=15)
 
-        title_label = ctk.CTkLabel(
-            main_frame,
-            text="🐉 AI DUNGEON MASTER 🐉",
+        title_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        title_frame.pack(pady=(0, 15))
+
+        self.lang_var = ctk.StringVar(value="EN" if self.language == "en" else "RU")
+        self.language_menu = ctk.CTkOptionMenu(
+            title_frame,
+            variable=self.lang_var,
+            values=["RU", "EN"],
+            command=self.on_language_selected,
+            width=80,
+        )
+        self.language_menu.pack(side=ctk.RIGHT, padx=(10, 0))
+
+        self.title_label = ctk.CTkLabel(
+            title_frame,
+            text=self.tr("app_title"),
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color=COLORS["accent"],
         )
-        title_label.pack(pady=(0, 15))
+        self.title_label.pack(side=ctk.LEFT)
 
         info_frame = ctk.CTkFrame(main_frame, height=40)
         info_frame.pack(fill=ctk.X, pady=(0, 10))
@@ -137,7 +205,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         add_world_btn = ctk.CTkButton(info_frame, text="➕", width=30, command=self.create_world_dialog)
         add_world_btn.pack(side=ctk.LEFT, padx=5, pady=5)
 
-        self.status_label = ctk.CTkLabel(info_frame, text="● Готов", text_color=COLORS["player_color"])
+        self.status_label = ctk.CTkLabel(info_frame, text=self.tr("ready"), text_color=COLORS["player_color"])
         self.status_label.pack(side=ctk.RIGHT, padx=10, pady=5)
 
         self.summary_toggle_btn = ctk.CTkButton(
@@ -150,7 +218,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         )
         self.summary_toggle_btn.pack(side=ctk.RIGHT, padx=5, pady=5)
 
-        self.summary_label = ctk.CTkLabel(info_frame, text="До суммаризации: -", text_color="gray")
+        self.summary_label = ctk.CTkLabel(info_frame, text=self.tr("summary_until"), text_color="gray")
         self.summary_label.pack(side=ctk.RIGHT, padx=5, pady=5)
 
         self.memory_toggle_btn = ctk.CTkButton(
@@ -163,22 +231,24 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         )
         self.memory_toggle_btn.pack(side=ctk.RIGHT, padx=5, pady=5)
 
-        self.memory_label = ctk.CTkLabel(info_frame, text="До памяти: -", text_color="gray")
+        self.memory_label = ctk.CTkLabel(info_frame, text=self.tr("memory_until"), text_color="gray")
         self.memory_label.pack(side=ctk.RIGHT, padx=5, pady=5)
 
         top_button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         top_button_frame.pack(fill=ctk.X, pady=(0, 10))
 
+        self.top_command_buttons = []
         top_commands = [
-            ("📁 Файлы мира", self.open_world_files),
-            ("📇 Карточки", self.open_story_cards_editor),
-            ("🔄 Миры", self.manage_worlds),
-            ("⚙️ Настройки ИИ", self.open_ai_settings),
-            ("❌ Выйти", self.quit_app),
+            ("btn.world_files", self.open_world_files),
+            ("btn.cards", self.open_story_cards_editor),
+            ("btn.worlds", self.manage_worlds),
+            ("btn.ai_settings", self.open_ai_settings),
+            ("btn.quit", self.quit_app),
         ]
-        for text, cmd in top_commands:
-            btn = ctk.CTkButton(top_button_frame, text=text, command=cmd, fg_color="transparent", border_width=1)
+        for key, cmd in top_commands:
+            btn = ctk.CTkButton(top_button_frame, text=self.tr(key), command=cmd, fg_color="transparent", border_width=1)
             btn.pack(side=ctk.LEFT, padx=5)
+            self.top_command_buttons.append((btn, key))
 
         self.text_area = ctk.CTkTextbox(main_frame, wrap=tk.WORD, font=ctk.CTkFont(family="Arial", size=14))
         self.text_area.pack(fill=ctk.BOTH, expand=True, pady=(0, 10))
@@ -200,30 +270,31 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         row2 = ctk.CTkFrame(button_frame, fg_color="transparent")
         row2.pack(fill=ctk.X)
 
+        self.action_buttons = []
         row1_commands = [
-            ("❓ Дальше?", self.prompt_next_turn),
-            ("🔁 Реролл", self.regenerate_action),
-            ("✏️ Изменить", self.edit_last_dm_message),
-            ("📋 Промпт", self.show_last_prompt),
+            ("btn.next", self.prompt_next_turn),
+            ("btn.reroll", self.regenerate_action),
+            ("btn.edit", self.edit_last_dm_message),
+            ("btn.prompt", self.show_last_prompt),
         ]
         row2_commands = [
-            ("📝 Суммаризация", self.force_summary),
-            ("🧠 Память", self.show_memory_bank),
-            ("⏪ Отменить ход", self.undo_action),
+            ("btn.summary", self.force_summary),
+            ("btn.memory", self.show_memory_bank),
+            ("btn.undo", self.undo_action),
         ]
 
-        for text, cmd in row1_commands:
-            ctk.CTkButton(row1, text=text, command=cmd, **btn_args).pack(
-                side=ctk.LEFT, padx=3, expand=True, fill=ctk.X
-            )
+        for key, cmd in row1_commands:
+            btn = ctk.CTkButton(row1, text=self.tr(key), command=cmd, **btn_args)
+            btn.pack(side=ctk.LEFT, padx=3, expand=True, fill=ctk.X)
+            self.action_buttons.append((btn, key))
 
-        for text, cmd in row2_commands:
+        for key, cmd in row2_commands:
             btn_kwargs = dict(btn_args)
             if cmd == self.undo_action:
                 btn_kwargs.update(fg_color=COLORS["danger"], hover_color=COLORS["danger_hover"])
-            ctk.CTkButton(row2, text=text, command=cmd, **btn_kwargs).pack(
-                side=ctk.LEFT, padx=3, expand=True, fill=tk.X
-            )
+            btn = ctk.CTkButton(row2, text=self.tr(key), command=cmd, **btn_kwargs)
+            btn.pack(side=ctk.LEFT, padx=3, expand=True, fill=tk.X)
+            self.action_buttons.append((btn, key))
 
         input_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         input_frame.pack(fill=ctk.X)
@@ -237,7 +308,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
         self.send_button = ctk.CTkButton(
             input_frame,
-            text="▶ Отправить",
+            text=self.tr("btn.send"),
             command=self.send_action,
             fg_color=COLORS["accent"],
             hover_color=COLORS["button_hover"],
@@ -312,69 +383,69 @@ class DungeonApp(DialogMixin, AIEngineMixin):
     def update_toggle_buttons(self):
         if self.summary_enabled:
             self.summary_toggle_btn.configure(
-                text="📝 Сумм.: ВКЛ",
+                text=self.tr("toggle.summary_on"),
                 fg_color=COLORS["player_color"],
                 hover_color=COLORS["player_color"],
             )
         else:
-            self.summary_toggle_btn.configure(text="📝 Сумм.: ВЫКЛ", fg_color="gray40", hover_color="gray50")
+            self.summary_toggle_btn.configure(text=self.tr("toggle.summary_off"), fg_color="gray40", hover_color="gray50")
 
         if self.memory_enabled:
             self.memory_toggle_btn.configure(
-                text="🧠 Память: ВКЛ",
+                text=self.tr("toggle.memory_on"),
                 fg_color=COLORS["player_color"],
                 hover_color=COLORS["player_color"],
             )
         else:
-            self.memory_toggle_btn.configure(text="🧠 Память: ВЫКЛ", fg_color="gray40", hover_color="gray50")
+            self.memory_toggle_btn.configure(text=self.tr("toggle.memory_off"), fg_color="gray40", hover_color="gray50")
 
     def toggle_summary(self):
         self.summary_enabled = not self.summary_enabled
         self.save_global_settings()
         self.update_toggle_buttons()
         self.update_summary_label()
-        state = "включена" if self.summary_enabled else "выключена"
-        self.add_system_message(f"📝 Автосуммаризация {state}.")
+        state = self.tr("summary_enabled_word" if self.summary_enabled else "summary_disabled_word")
+        self.add_system_message(self.tr("msg.summary_toggled", state=state))
 
     def toggle_memory(self):
         self.memory_enabled = not self.memory_enabled
         self.save_global_settings()
         self.update_toggle_buttons()
         self.update_memory_label()
-        state = "включён" if self.memory_enabled else "выключён"
-        self.add_system_message(f"🧠 Банк памяти {state}.")
+        state = self.tr("memory_enabled_word" if self.memory_enabled else "memory_disabled_word")
+        self.add_system_message(self.tr("msg.memory_toggled", state=state))
 
     def update_summary_label(self):
         if not self.current_world_path:
-            self.summary_label.configure(text="До суммаризации: -")
+            self.summary_label.configure(text=self.tr("summary_until"))
             return
         if not self.summary_enabled:
-            self.summary_label.configure(text="Сумм.: выкл", text_color="gray")
+            self.summary_label.configure(text=self.tr("summary.off"), text_color="gray")
             return
         remaining = max(0, self.summary_interval - self.turns_since_summary)
         color = COLORS["accent"] if remaining <= 2 else "gray"
-        self.summary_label.configure(text=f"До сумм.: {remaining}", text_color=color)
+        self.summary_label.configure(text=self.tr("summary.until", n=remaining), text_color=color)
 
     def update_memory_label(self):
         if not self.current_world_path:
-            self.memory_label.configure(text="До памяти: -")
+            self.memory_label.configure(text=self.tr("memory_until"))
             return
         if not self.memory_enabled:
             entries_count = len(self.memory_bank.get("entries", []))
-            self.memory_label.configure(text=f"Память: {entries_count} | выкл", text_color="gray")
+            self.memory_label.configure(text=self.tr("memory.off", n=entries_count), text_color="gray")
             return
         remaining = max(0, self.memory_interval - self.turns_since_memory)
         color = COLORS["accent"] if remaining <= 1 else "gray"
         entries_count = len(self.memory_bank.get("entries", []))
-        self.memory_label.configure(text=f"Память: {entries_count} | до инд.: {remaining}", text_color=color)
+        self.memory_label.configure(text=self.tr("memory.until", n=entries_count, remaining=remaining), text_color=color)
 
     def initialize_world(self):
         worlds = get_world_list()
         if not worlds:
-            if messagebox.askyesno("Нет миров", "У вас нет ни одного мира. Создать новый?"):
+            if messagebox.askyesno(self.tr("dialog.no_worlds_title"), self.tr("dialog.no_worlds_q")):
                 self.create_world_dialog()
             else:
-                self.add_system_message("Добро пожаловать! Создайте новый мир через кнопку «🔄 Миры».")
+                self.add_system_message(self.tr("msg.welcome"))
         else:
             self.load_world(worlds[0])
 
@@ -397,7 +468,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.turns_since_memory = current_turns - self.memory_bank.get("last_indexed_turn", 0)
 
         self.refresh_chat_display()
-        self.add_system_message(f"✅ Мир '{world_name}' загружен.")
+        self.add_system_message(self.tr("msg.world_loaded", name=world_name))
         self.update_summary_label()
         self.update_memory_label()
 
@@ -416,7 +487,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.refresh_chat_display()
         self.update_summary_label()
         self.update_memory_label()
-        self.add_system_message("⏪ Последнее сообщение удалено.")
+        self.add_system_message(self.tr("msg.undone"))
 
     def regenerate_action(self):
         if self.is_busy() or not self.history or not self.current_world_path:
@@ -499,25 +570,25 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def refresh_busy_state(self):
         if self.processing:
-            btn_text = "⏳ Думаю..."
-            status_text = "● Generation..."
+            btn_text = self.tr("busy.thinking")
+            status_text = self.tr("status.generating")
             lock_input = True
         elif self.summary_indexing and self.memory_indexing:
-            btn_text = "⏳ Фоновые задачи..."
-            status_text = "● Суммаризация и память..."
+            btn_text = self.tr("busy.background")
+            status_text = self.tr("status.summary_memory")
             lock_input = False
         elif self.summary_indexing:
-            btn_text = "⏳ Суммаризация..."
-            status_text = "● Суммаризация..."
+            btn_text = self.tr("busy.summary")
+            status_text = self.tr("status.summary")
             lock_input = False
         elif self.memory_indexing:
-            btn_text = "⏳ Память..."
-            status_text = "● Индексация памяти..."
+            btn_text = self.tr("busy.memory")
+            status_text = self.tr("status.memory")
             lock_input = False
         else:
-            self.send_button.configure(state="normal", text="▶ Отправить")
+            self.send_button.configure(state="normal", text=self.tr("btn.send"))
             self.input_field.configure(state="normal")
-            self.status_label.configure(text="● Готов", text_color=COLORS["player_color"])
+            self.status_label.configure(text=self.tr("ready"), text_color=COLORS["player_color"])
             self.input_field.focus()
             return
 
@@ -547,10 +618,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
     def show_context_menu(self, event):
         menu = tk.Menu(self.root, tearoff=0)
         target = event.widget._textbox if hasattr(event.widget, "_textbox") else event.widget
-        menu.add_command(label="Выделить всё", command=lambda: self.select_all_text(target))
-        menu.add_command(label="Копировать", command=lambda: self.copy_selected_text(target))
-        menu.add_command(label="Вставить", command=lambda: target.event_generate("<<Paste>>"))
-        menu.add_command(label="Вырезать", command=lambda: target.event_generate("<<Cut>>"))
+        menu.add_command(label=self.tr("menu.select_all"), command=lambda: self.select_all_text(target))
+        menu.add_command(label=self.tr("menu.copy"), command=lambda: self.copy_selected_text(target))
+        menu.add_command(label=self.tr("menu.paste"), command=lambda: target.event_generate("<<Paste>>"))
+        menu.add_command(label=self.tr("menu.cut"), command=lambda: target.event_generate("<<Cut>>"))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:

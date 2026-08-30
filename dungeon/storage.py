@@ -1,11 +1,12 @@
 import json
 
-from .config import BASE_DIR, DEFAULT_API_URL, INTRODUCTION_FILE, INTRODUCTION_PREFIX, SETTINGS_FILE, WORLD_FILES
+from .config import BASE_DIR, DEFAULT_API_URL, INTRODUCTION_FILE, SETTINGS_FILE, WORLD_FILES
+from .i18n import INTRO_PREFIX
 
 
 def format_introduction_history(intro_text):
     intro_text = intro_text.strip()
-    return f"{INTRODUCTION_PREFIX} {intro_text}" if intro_text else None
+    return f"{INTRO_PREFIX} {intro_text}" if intro_text else None
 
 
 def ensure_introduction_in_history(world_path, history):
@@ -18,11 +19,11 @@ def ensure_introduction_in_history(world_path, history):
     intro_msg = format_introduction_history(intro_text)
 
     if not intro_msg:
-        if history and history[0].startswith(INTRODUCTION_PREFIX):
+        if history and history[0].startswith(INTRO_PREFIX):
             return history[1:]
         return history
 
-    if history and history[0].startswith(INTRODUCTION_PREFIX):
+    if history and history[0].startswith(INTRO_PREFIX):
         history[0] = intro_msg
     else:
         history.insert(0, intro_msg)
@@ -108,6 +109,7 @@ def load_global_settings():
         "stream_mode": True,
         "summary_enabled": True,
         "memory_enabled": True,
+        "language": "ru",
     }
     if SETTINGS_FILE.exists():
         try:

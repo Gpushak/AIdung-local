@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from .i18n import default_templates
+
 DEFAULT_API_URL = "http://localhost:1234/v1/chat/completions"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -12,18 +14,18 @@ else:
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 WORLD_FILES = {
-    "introduction.txt": "Вступление",
-    "ai_instructions.txt": "Инструкции ИИ",
-    "plot_basics.txt": "Основы сюжета",
-    "author_notes.txt": "Авторские пометки",
-    "summary.txt": "Краткое содержание",
+    "introduction.txt": "introduction.txt",
+    "ai_instructions.txt": "ai_instructions.txt",
+    "plot_basics.txt": "plot_basics.txt",
+    "author_notes.txt": "author_notes.txt",
+    "summary.txt": "summary.txt",
 }
 
 INTRODUCTION_FILE = "introduction.txt"
-INTRODUCTION_PREFIX = "Вступление:"
 
+DEFAULT_TEMPLATES = default_templates("ru")
 STORY_CARDS_KEY = "__story_cards__"
-STORY_CARDS_LABEL = "Карточки историй"
+STORY_CARDS_LABEL = "Story cards"
 
 COLORS = {
     "accent": "#e6b450",
@@ -37,29 +39,4 @@ COLORS = {
     "listbox_sel": "#3a3a3a",
 }
 
-DEFAULT_TEMPLATES = {
-    "introduction.txt": "Вы — искатель приключений в мире фэнтези. История начинается здесь: опишите стартовую сцену, обстановку и с чего начинается приключение.",
-    "ai_instructions.txt": """Ты - ИИ мастер, который предоставляет любой контент для ролевых игр.
-Инструкции, которые ты (Мастер) обязан соблюдать при написании:
-- '!!' Двигай сюжет, не зацикливайся на одной сцене.
-- '!' Отдавайте предпочтение действиям и диалогам, а не описаниям. 
-- '!' Не описывайте окружающую обстановку, освещение, погоду, звуки или жестикуляцию персонажей, если это напрямую не влияет на текущее действие.
-- '!' Избегайте повторяющегося эмоционального повествования.
-- '!' Пишите скорее как сценарий фильма, чем как роман.
-- Будьте конкретны, описательны и изобретательны.
-- Избегайте повторений и обобщений.
-- Старайтесь развивать историю, даже если пользователь бездействует.
-- Обычно говорите от второго лица (например, "О смотрит на вас"). Но используйте слова от третьего лица, если вам кажется, что история развивается именно так.
-- Если ввод заканчивается на середине предложения, продолжайте с того места, где он был прерван.
-- Подробно опишите внешность и характерные черты персонажей.
-
-Ограничение на ответ - не более 800 символов!
-Разрешено принимать решения и писать за пользователя!
-""",
-    "plot_basics.txt": "Мир фэнтези.\nВы искатель приключений.\nУ вас есть меч и щит.\nВы носите легкую кожаную броню.",
-    "author_notes.txt": "Стиль написания: Приключение, комедия, фэнтези.",
-    "summary.txt": "",
-}
-
-WINDOW_TITLE = "🐉 AI Dungeon Master"
 WINDOW_SIZE = "900x1200"

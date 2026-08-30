@@ -1,6 +1,8 @@
 import json
 import re
 
+from .i18n import DM_PREFIX, PLAYER_PREFIX, t
+
 MEMORY_BANK_FILE = "memory_bank.json"
 
 
@@ -27,7 +29,7 @@ def count_completed_turns(history):
     turns = 0
     i = 0
     while i < len(history) - 1:
-        if history[i].startswith("Игрок:") and history[i + 1].startswith("Мастер:"):
+        if history[i].startswith(PLAYER_PREFIX) and history[i + 1].startswith(DM_PREFIX):
             turns += 1
             i += 2
         else:
@@ -41,9 +43,9 @@ def get_turn_messages(history, turn_start, turn_end):
     current_turn = 0
     i = 0
     while i < len(history):
-        if history[i].startswith("Игрок:"):
+        if history[i].startswith(PLAYER_PREFIX):
             chunk = [history[i]]
-            if i + 1 < len(history) and history[i + 1].startswith("Мастер:"):
+            if i + 1 < len(history) and history[i + 1].startswith(DM_PREFIX):
                 chunk.append(history[i + 1])
                 current_turn += 1
                 if turn_start <= current_turn <= turn_end:
@@ -78,10 +80,10 @@ def retrieve_relevant_memories(query, bank, top_k=5, min_score=1):
     return [entry for _, entry in scored[:top_k]]
 
 
-def format_memory_block(memories):
+def format_memory_block(memories, lang="ru"):
     if not memories:
         return ""
-    block = "=== РЕЛЕВАНТНЫЕ ВОСПОМИНАНИЯ (банк памяти) ===\n"
+    block = t(lang, "prompt.memory_header")
     for mem in memories:
         keys = ", ".join(mem.get("keys", []))
         block += f"[{mem['id']}] ({keys}): {mem['summary']}\n"

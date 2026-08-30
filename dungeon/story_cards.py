@@ -4,19 +4,11 @@ import re
 STORY_CARDS_FILE = "story_cards.json"
 
 
-def default_story_cards():
-    return {
-        "cards": [
-            {
-                "id": "card_001",
-                "title": "Главный герой",
-                "description": (
-                    "Имя: Арион\nКласс: Воин\nОружие: Длинный меч и щит\nНавыки: Атлетика, Выживание"
-                ),
-                "triggers": ["арион", "герой", "воин", "игрок"],
-            }
-        ]
-    }
+from .i18n import default_story_cards as demo_story_cards, t
+
+
+def default_story_cards(lang="ru"):
+    return demo_story_cards(lang)
 
 
 def load_story_cards(world_path):
@@ -110,22 +102,27 @@ def retrieve_relevant_cards(query, cards_data, top_k=5, min_score=1):
     return matched
 
 
-def format_story_cards_block(cards):
+def format_story_cards_block(cards, lang="ru"):
     if not cards:
         return ""
-    block = "=== РЕЛЕВАНТНЫЕ КАРТОЧКИ ИСТОРИИ ===\n"
+    block = t(lang, "prompt.cards_header")
     for card in cards:
         triggers = format_triggers(card.get("triggers", []))
-        trigger_hint = f" (триггеры: {triggers})" if triggers else " (всегда активна)"
+        trigger_hint = (
+            t(lang, "prompt.card_triggers", triggers=triggers)
+            if triggers
+            else t(lang, "prompt.card_always")
+        )
         block += f"[{card['title']}]{trigger_hint}\n{card.get('description', '')}\n\n"
     return block
 
 
-def format_all_cards_for_summary(cards_data):
+def format_all_cards_for_summary(cards_data, lang="ru"):
     cards = cards_data.get("cards", [])
     if not cards:
-        return "Информация отсутствует."
+        return t(lang, "prompt.cards_missing")
     lines = []
+    untitled = t(lang, "cards.untitled")
     for card in cards:
-        lines.append(f"=== {card.get('title', 'Без названия')} ===\n{card.get('description', '')}")
+        lines.append(f"=== {card.get('title', untitled)} ===\n{card.get('description', '')}")
     return "\n\n".join(lines)

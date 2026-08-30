@@ -6,7 +6,8 @@ from threading import Thread
 
 import requests
 
-from .config import INTRODUCTION_FILE, INTRODUCTION_PREFIX, WORLD_FILES
+from .config import INTRODUCTION_FILE, WORLD_FILES
+from .i18n import PLAYER_PREFIX, t
 from .memory import (
     count_completed_turns,
     format_memory_block,
@@ -93,7 +94,7 @@ class AIEngineMixin:
                 return
 
             if force and new_turns == 0:
-                self.root.after(0, lambda: self.add_system_message("🧠 Нет новых ходов для индексации."))
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_memory_turns")))
                 return
 
             chunk_size = new_turns if force else self.memory_interval
@@ -105,18 +106,7 @@ class AIEngineMixin:
                 return
 
             fallback_text = "\n".join(messages)
-            prompt = f"""Проанализируй фрагмент текстовой RPG-сессии.
-Сделай:
-1. summary — 3-6 предложений, только ключевые события и факты (имена, предметы, решения)
-2. keys — до 3 ключевых слов для поиска, только самые важные! (имена NPC, локации, предметы, события)
-3. location — текущая локация или null
-4. npcs — список упомянутых NPC
-
-ФРАГМЕНТ:
-{fallback_text}
-
-Ответь ТОЛЬКО валидным JSON:
-{{"summary": "...", "keys": ["...", "..."], "location": "...", "npcs": ["..."]}}"""
+            prompt = t(self.language, "prompt.memory_index", fragment=fallback_text)
 
             payload = self._api_payload(
                 messages=[{"role": "user", "content": prompt}],
@@ -144,16 +134,16 @@ class AIEngineMixin:
             self.root.after(
                 0,
                 lambda: self.add_system_message(
-                    f"🧠 Память [{entry['id']}]: {entry['summary'][:80]}... (ключи: {keys_preview})"
+                    self.tr("msg.memory_entry", id=entry["id"], summary=entry["summary"][:80], keys=keys_preview)
                 ),
             )
             self.root.after(0, self.update_memory_label)
 
         except requests.exceptions.ConnectionError:
-            self.root.after(0, lambda: self.add_system_message("❌ Банк памяти: сервер ИИ недоступен."))
+            self.root.after(0, lambda: self.add_system_message(self.tr("msg.memory_offline")))
         except Exception as e:
             err_msg = str(e)
-            self.root.after(0, lambda msg=err_msg: self.add_system_message(f"⚠️ Ошибка индексации памяти: {msg}"))
+            self.root.after(0, lambda msg=err_msg: self.add_system_message(self.tr("msg.memory_error", msg=msg)))
         finally:
             self.memory_indexing = False
             self.root.after(0, self.refresh_busy_state)
@@ -164,17 +154,14 @@ class AIEngineMixin:
                 direction_hint = direction_hint.strip()
                 history_label = f"❓ {direction_hint}"
                 if direction_hint and (
-                    not self.history or f"Игрок: {history_label}" != self.history[-1]
+                    not self.history or f"{PLAYER_PREFIX} {history_label}" != self.history[-1]
                 ):
-                    self.history.append(f"Игрок: {history_label}")
-                user_content = f"""Автор задаёт направление следующего хода:
-{direction_hint}
-
-Реализуй это в повествовании органично, сохраняя стиль, контекст и правила мира. Не упоминай, что это «задание от автора» — просто развивай сюжет."""
+                    self.history.append(f"{PLAYER_PREFIX} {history_label}")
+                user_content = t(self.language, "prompt.direction", hint=direction_hint)
             else:
-                if user_input and (not self.history or f"Игрок: {user_input}" != self.history[-1]):
-                    self.history.append(f"Игрок: {user_input}")
-                user_content = user_input if user_input else "(Продолжай повествование.)"
+                if user_input and (not self.history or f"{PLAYER_PREFIX} {user_input}" != self.history[-1]):
+                    self.history.append(f"{PLAYER_PREFIX} {user_input}")
+                user_content = user_input if user_input else t(self.language, "prompt.continue")
 
             context = ""
             for fname in WORLD_FILES:
@@ -189,7 +176,7 @@ class AIEngineMixin:
             summary_path = self.current_world_path / "summary.txt"
             summary_content = summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else ""
             if summary_content:
-                context += f"=== Сжатая хроника прошлых событий (summary.txt) ===\n{summary_content}\n"
+                context += t(self.language, "prompt.summary_header", text=summary_content)
 
             preview_msgs = []
             preview_tokens = 0
@@ -216,7 +203,7 @@ class AIEngineMixin:
             if cards_block:
                 context += cards_block
 
-            system_base_text = f"{context}\nИСТОРИЯ ТЕКУЩЕЙ ИГРОВОЙ СЕССИИ:\n"
+            system_base_text = f"{context}\n{t(self.language, 'prompt.history_header')}\n"
             static_tokens = count_tokens(system_base_text)
             user_tokens = count_tokens(user_content)
             safety_buffer = 200
@@ -240,7 +227,7 @@ class AIEngineMixin:
                     break
 
             history_text = "\n".join(short_history)
-            system_final_content = f"""{context}\nИСТОРИЯ ТЕКУЩЕЙ ИГРОВОЙ СЕССИИ:\n{history_text}"""
+            system_final_content = f"""{context}\n{t(self.language, 'prompt.history_header')}\n{history_text}"""
             prompt_tokens = count_tokens(system_final_content) + count_tokens(user_content)
 
             self.last_sent_prompt = {
@@ -305,7 +292,7 @@ class AIEngineMixin:
                 self.root.after(0, self.start_dm_stream)
 
             if not ai_text:
-                self.root.after(0, lambda: self.add_system_message("⚠️ Модель вернула пустой ответ."))
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.empty_model")))
                 return
 
             final_narration = clean_dm_response(ai_text)
@@ -321,7 +308,7 @@ class AIEngineMixin:
             self.root.after(
                 0,
                 lambda p=prompt_tokens, c=completion_tokens, t=total_tokens: self.add_system_message(
-                    f"📊 Токены: Контекст: {p} | Ответ: {c} | Всего: {t}/{self.context_size}"
+                    self.tr("msg.tokens", p=p, c=c, t=t, ctx=self.context_size)
                 ),
             )
 
@@ -330,7 +317,7 @@ class AIEngineMixin:
             )
             if self._schedule_summary_after_turn:
                 self.turns_since_summary = 0
-                self.root.after(0, lambda: self.add_system_message("📝 ИИ пересматривает хронологию..."))
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.reviewing")))
 
             self._schedule_memory_after_turn = (
                 self.memory_enabled and self.turns_since_memory >= self.memory_interval
@@ -340,10 +327,10 @@ class AIEngineMixin:
                 self.root.after(0, self.update_memory_label)
 
         except requests.exceptions.ConnectionError:
-            self.root.after(0, lambda: self.add_system_message("❌ Ошибка: Локальный сервер ИИ не запущен!"))
+            self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_server")))
         except Exception as e:
             err_msg = str(e)
-            self.root.after(0, lambda msg=err_msg: self.add_system_message(f"❌ Ошибка: {msg}"))
+            self.root.after(0, lambda msg=err_msg: self.add_system_message(self.tr("msg.error", msg=msg)))
         finally:
             self.root.after(0, self._finish_player_turn)
 
@@ -374,23 +361,16 @@ class AIEngineMixin:
 
             summary_path = self.current_world_path / "summary.txt"
             old_summary = (
-                summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else "Отсутствует."
+                summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else t(self.language, "prompt.none")
             )
-            story_cards_content = format_all_cards_for_summary(self.story_cards)
-            prompt_template_base = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
-Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
-ПРАВИЛА:
-1. Сформируй кратую исторую в хронологическомы порядке.
-2. Игнорируй мелкую рутину, лишние диалоги.
-3. Пиши структурированно, лаконично.
-4. Обязательно учти информацию из СТАРОГО краткого содержания.
-
-СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
-{old_summary}
-
-АКТУАЛЬНАЯ ИСТОРИЯ ИГРЫ:
-
-Выдай только текст нового краткого содержания простым текстом без лишних *, вступлений и Markdown."""
+            story_cards_content = format_all_cards_for_summary(self.story_cards, self.language)
+            prompt_template_base = t(
+                self.language,
+                "prompt.summary",
+                old_summary=old_summary,
+                cards=story_cards_content,
+                history="",
+            )
 
             summary_max_tokens = 1000
             base_prompt_tokens = count_tokens(prompt_template_base)
@@ -415,21 +395,13 @@ class AIEngineMixin:
 
             history_text = "\n".join(short_history)
 
-            prompt = f"""Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
-Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
-ПРАВИЛА:
-1. Сформируй кратую исторую в хронологическомы порядке.
-2. Игнорируй мелкую рутину.
-3. Пиши лаконично, тезисно.
-4. Учти СТАРОЕ краткое содержание.
-
-СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
-{old_summary}
-
-АКТУАЛЬНАЯ ИСТОРИЯ ИГРЫ:
-{history_text}
-
-Выдай только текст нового краткого содержания простым текстом без лишних *, вступлений и Markdown."""
+            prompt = t(
+                self.language,
+                "prompt.summary",
+                old_summary=old_summary,
+                cards=story_cards_content,
+                history=history_text,
+            )
 
             payload = self._api_payload(
                 messages=[{"role": "user", "content": prompt}],
@@ -445,14 +417,14 @@ class AIEngineMixin:
             if new_summary:
                 summary_path.write_text(new_summary, encoding="utf-8")
                 self.root.after(
-                    0, lambda: self.add_system_message("✨ Краткое содержание мира успешно синхронизировано!")
+                    0, lambda: self.add_system_message(self.tr("msg.summary_ok"))
                 )
                 self.root.after(0, self.update_summary_label)
 
         except Exception as e:
             err_msg = str(e)
             self.root.after(
-                0, lambda msg=err_msg: self.add_system_message(f"⚠️ Не удалось автоматически обновить саммари: {msg}")
+                0, lambda msg=err_msg: self.add_system_message(self.tr("msg.summary_fail", msg=msg))
             )
         finally:
             self.summary_indexing = False
