@@ -114,13 +114,16 @@ class DialogMixin:
         cards_tab = tabview.add(STORY_CARDS_LABEL)
         cards_tab_frame = ctk.CTkFrame(cards_tab, fg_color="transparent")
         cards_tab_frame.pack(fill=ctk.BOTH, expand=True, padx=5, pady=5)
-        self._embed_story_cards_editor(cards_tab_frame, new_world_cards, editable=True)
+        cards_editor = self._embed_story_cards_editor(
+            cards_tab_frame, new_world_cards, editable=True, persist=False
+        )
 
         def apply_new_world():
             name = name_entry.get().strip()
             if not name or (BASE_DIR / name).exists():
                 messagebox.showerror("Ошибка", "Некорректное или занятое имя")
                 return
+            cards_editor["save"]()
             content = {fname: w.get("1.0", tk.END).strip() for fname, w in tabs.items()}
             world_path = BASE_DIR / name
             save_world_files(world_path, content)
@@ -230,7 +233,7 @@ class DialogMixin:
         else:
             self.unsaved_label.configure(text="")
 
-    def _embed_story_cards_editor(self, parent, cards_data, editable=True, on_save=None):
+    def _embed_story_cards_editor(self, parent, cards_data, editable=True, on_save=None, persist=True):
         left = ctk.CTkFrame(parent, width=180)
         left.pack(side=ctk.LEFT, fill=ctk.Y, padx=(0, 8))
         left.pack_propagate(False)
@@ -381,6 +384,8 @@ class DialogMixin:
 
         def save_cards():
             apply_current_card()
+            if not persist:
+                return
             if on_save:
                 on_save()
             elif self.current_world_path:
@@ -401,14 +406,22 @@ class DialogMixin:
                 hover_color=COLORS["danger_hover"],
                 width=100,
             ).pack(side=ctk.LEFT, padx=3)
-            ctk.CTkButton(
-                btn_row,
-                text="💾 Сохранить",
-                command=save_cards,
-                fg_color=COLORS["accent"],
-                text_color="black",
-                width=110,
-            ).pack(side=ctk.RIGHT, padx=3)
+            if persist:
+                ctk.CTkButton(
+                    btn_row,
+                    text="💾 Сохранить",
+                    command=save_cards,
+                    fg_color=COLORS["accent"],
+                    text_color="black",
+                    width=110,
+                ).pack(side=ctk.RIGHT, padx=3)
+            else:
+                ctk.CTkLabel(
+                    btn_row,
+                    text="Сохранятся вместе с миром",
+                    text_color="gray",
+                    font=ctk.CTkFont(size=11),
+                ).pack(side=ctk.RIGHT, padx=3)
 
         refresh_list(select_index=0 if cards_data.get("cards") else None)
         return {"refresh": refresh_list, "save": save_cards}

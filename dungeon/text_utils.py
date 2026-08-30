@@ -1,5 +1,75 @@
 import re
 
+THINK_TAG_RE = re.compile(
+    r"<(think|thinking|reasoning|reflection)>.*?</\1>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+THINK_OPEN_RE = re.compile(r"<(think|thinking|reasoning|reflection)>", re.IGNORECASE)
+THINK_CLOSE_RE = re.compile(r"</(think|thinking|reasoning|reflection)>", re.IGNORECASE)
+
+
+def strip_reasoning_blocks(text: str) -> str:
+    if not text:
+        return text
+    return THINK_TAG_RE.sub("", text).strip()
+
+
+def extract_message_text(message):
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") in ("text", "output_text"):
+                    parts.append(part.get("text") or "")
+            elif isinstance(part, str):
+                parts.append(part)
+        content = "".join(parts)
+    return strip_reasoning_blocks(content or "")
+
+
+class StreamThinkFilter:
+    """Drops <think>...</think> (and similar) even when tags split across chunks."""
+
+    def __init__(self):
+        self.pending = ""
+        self.in_think = False
+
+    def feed(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        text = self.pending + chunk
+        self.pending = ""
+        out = []
+        i = 0
+        while i < len(text):
+            if self.in_think:
+                close = THINK_CLOSE_RE.search(text, i)
+                if not close:
+                    leftover = text[i:]
+                    if leftover.startswith("<") and len(leftover) < 24:
+                        self.pending = leftover
+                    return "".join(out)
+                i = close.end()
+                self.in_think = False
+                continue
+            open_match = THINK_OPEN_RE.search(text, i)
+            if not open_match:
+                leftover = text[i:]
+                lt = leftover.rfind("<")
+                if lt != -1 and len(leftover) - lt < 24 and not leftover[lt:].startswith("</"):
+                    out.append(leftover[:lt])
+                    self.pending = leftover[lt:]
+                else:
+                    out.append(leftover)
+                break
+            out.append(text[i : open_match.start()])
+            self.in_think = True
+            i = open_match.end()
+        return "".join(out)
+
 
 def fix_truncated_text(text: str) -> str:
     text = text.strip()
@@ -21,6 +91,7 @@ def fix_truncated_text(text: str) -> str:
 
 
 def clean_dm_response(ai_text: str) -> str:
+    ai_text = strip_reasoning_blocks(ai_text)
     ai_text = re.sub(r"^(Мастер|AI|Narrator|DM|ИИ|Master):\s*", "", ai_text, flags=re.IGNORECASE).strip()
     final_narration = ai_text
     final_narration = re.sub(r"\$\{?[^}]*\}?\$", "", final_narration)

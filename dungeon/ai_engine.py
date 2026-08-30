@@ -17,7 +17,13 @@ from .memory import (
 )
 from .story_cards import format_all_cards_for_summary, format_story_cards_block, retrieve_relevant_cards
 from .storage import save_history
-from .text_utils import clean_dm_response, clean_stream_chunk
+from .text_utils import (
+    StreamThinkFilter,
+    clean_dm_response,
+    clean_stream_chunk,
+    extract_message_text,
+    strip_reasoning_blocks,
+)
 from .tokens import count_tokens
 
 
@@ -32,7 +38,35 @@ class AIEngineMixin:
         payload = dict(fields)
         if self.model:
             payload["model"] = self.model
+        # Disable chain-of-thought across common OpenAI-compatible providers.
+        payload["include_reasoning"] = False
+        payload["reasoning"] = {"effort": "none", "exclude": True, "enabled": False}
+        payload["reasoning_effort"] = "none"
+        payload["enable_thinking"] = False
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
         return payload
+
+    def _api_post(self, payload, **request_kwargs):
+        response = requests.post(self.api_url, json=payload, headers=self._api_headers(), **request_kwargs)
+        if response.status_code == 400:
+            stripped = {
+                key: value
+                for key, value in payload.items()
+                if key
+                not in {
+                    "include_reasoning",
+                    "reasoning",
+                    "reasoning_effort",
+                    "enable_thinking",
+                    "chat_template_kwargs",
+                }
+            }
+            if stripped != payload:
+                retry = requests.post(self.api_url, json=stripped, headers=self._api_headers(), **request_kwargs)
+                if retry.ok:
+                    return retry
+        response.raise_for_status()
+        return response
 
     def start_memory_indexing(self, force=False):
         if self.memory_indexing:
@@ -90,9 +124,9 @@ class AIEngineMixin:
                 max_tokens=350,
                 stream=False,
             )
-            response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=120)
+            response = self._api_post(payload, timeout=120)
             response.raise_for_status()
-            raw = response.json()["choices"][0]["message"]["content"].strip()
+            raw = extract_message_text(response.json()["choices"][0]["message"])
             parsed = parse_memory_index_response(raw, fallback_text)
 
             entry = {
@@ -228,13 +262,14 @@ class AIEngineMixin:
             )
 
             if self.stream_mode:
-                response = requests.post(self.api_url, json=payload, headers=self._api_headers(), stream=True, timeout=120)
+                response = self._api_post(payload, stream=True, timeout=120)
                 response.raise_for_status()
 
                 self.root.after(0, self.start_dm_stream)
                 raw_narration = ""
                 decoder = codecs.getincrementaldecoder("utf-8")("ignore")
                 buffer = ""
+                think_filter = StreamThinkFilter()
 
                 for chunk in response.iter_content(chunk_size=None):
                     if not chunk:
@@ -252,19 +287,21 @@ class AIEngineMixin:
 
                         try:
                             data = json.loads(json_str)
-                            content = data["choices"][0].get("delta", {}).get("content", "")
+                            delta = data["choices"][0].get("delta", {})
+                            content = delta.get("content") or ""
                             if content:
+                                content = think_filter.feed(content)
                                 content = clean_stream_chunk(content)
                                 if content:
                                     raw_narration += content
                                     self.root.after(0, lambda c=content: self.append_to_dm_stream(c))
                         except:
                             pass
-                ai_text = raw_narration.strip()
+                ai_text = strip_reasoning_blocks(raw_narration)
             else:
-                response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=120)
+                response = self._api_post(payload, timeout=120)
                 response.raise_for_status()
-                ai_text = response.json()["choices"][0]["message"]["content"].strip()
+                ai_text = extract_message_text(response.json()["choices"][0]["message"])
                 self.root.after(0, self.start_dm_stream)
 
             if not ai_text:
@@ -400,9 +437,9 @@ class AIEngineMixin:
                 max_tokens=summary_max_tokens,
                 stream=False,
             )
-            response = requests.post(self.api_url, json=payload, headers=self._api_headers(), timeout=180)
+            response = self._api_post(payload, timeout=180)
             response.raise_for_status()
-            new_summary = response.json()["choices"][0]["message"]["content"].strip()
+            new_summary = extract_message_text(response.json()["choices"][0]["message"])
             new_summary = new_summary.replace("```json", "").replace("```", "").strip()
 
             if new_summary:
