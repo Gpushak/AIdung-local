@@ -372,8 +372,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 elif msg.startswith("Мастер:"):
                     dm_text = msg[len("Мастер:") :].strip()
                     self.text_area.insert(tk.END, f"\n📜 {dm_text}\n", "dm")
-                elif msg.startswith(INTRODUCTION_PREFIX):
-                    intro_text = msg[len(INTRODUCTION_PREFIX) :].strip()
+                elif msg.startswith(INTRO_PREFIX):
+                    intro_text = msg[len(INTRO_PREFIX) :].strip()
                     self.text_area.insert(tk.END, f"\n📖 {intro_text}\n", "intro")
                 else:
                     self.text_area.insert(tk.END, f"\n{msg}\n", "system")
@@ -534,7 +534,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def sync_introduction_to_history(self, intro_text):
         intro_msg = format_introduction_history(intro_text)
-        if self.history and self.history[0].startswith(INTRODUCTION_PREFIX):
+        if self.history and self.history[0].startswith(INTRO_PREFIX):
             if intro_msg:
                 self.history[0] = intro_msg
             else:

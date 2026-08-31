@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from .config import BASE_DIR, DEFAULT_API_URL, INTRODUCTION_FILE, SETTINGS_FILE, WORLD_FILES
 from .i18n import INTRO_PREFIX
@@ -10,6 +11,7 @@ def format_introduction_history(intro_text):
 
 
 def ensure_introduction_in_history(world_path, history):
+    world_path = Path(world_path)
     history = list(history)
     intro_path = world_path / INTRODUCTION_FILE
     if not intro_path.exists():
@@ -37,7 +39,7 @@ def get_world_list():
 
 
 def load_world_config(world_name):
-    world_path = BASE_DIR / world_name
+    world_path = Path(BASE_DIR) / str(world_name)
     files_content = {}
     for fname in WORLD_FILES:
         path = world_path / fname
@@ -59,6 +61,7 @@ def load_world_config(world_name):
 
 
 def save_world_files(world_path, files_content):
+    world_path = Path(world_path)
     world_path.mkdir(parents=True, exist_ok=True)
     for fname, content in files_content.items():
         path = world_path / fname
@@ -67,6 +70,7 @@ def save_world_files(world_path, files_content):
 
 
 def save_history(world_path, history):
+    world_path = Path(world_path)
     history_path = world_path / "history.json"
     with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
