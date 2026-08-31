@@ -2,149 +2,148 @@
 
 🇬🇧 English | [🇷🇺 Русский](README.ru.md)
 
-(Завайбкоженая версия ai dungeon для запуска с локальной моделью)
-Локальный мастер для текстовых ролевых игр. Приложение работает с любой LLM через OpenAI-совместимый API (по умолчанию — [LM Studio](http://localhost:1234)).
+(A hacked-together version of AI Dungeon designed to run with a local model)
 
+A local Game Master for text-based role-playing games. The application works with any LLM through an OpenAI-compatible API (by default — [LM Studio](http://localhost:1234)).
 
-Если играете на русском, советую использовать модели gemma 4 (Они отлично пишут на русском и хорошее соотношение вес/качество), я использую в основном 31b или 26b a4b.
+If you play in Russian, I recommend using Gemma 4 models. They are excellent at writing in Russian and offer a good size-to-quality ratio. I mainly use the 31B or 26B A4B models.
 
-## Возможности
+## Features
 
-- **Текстовая RPG-сессия** — вы описываете действия, ИИ отвечает от лица мастера
-- **Миры** — каждый мир хранится в отдельной папке с настройками, историей и памятью
-- **Карточки историй** — заметки с триггерами; релевантные карточки подтягиваются в промпт автоматически
-- **Банк памяти** — ИИ индексирует прошлые ходы и подставляет нужные воспоминания по ключевым словам
-- **Автосуммаризация** — периодическое сжатие хроники в `summary.txt`
-- **Потоковый ответ** — ответ мастера появляется по мере генерации
-- **Управление контекстом** — подсчёт токенов, обрезка истории под размер окна модели
+- **Text RPG sessions** — describe your actions, and the AI responds as the Game Master
+- **Worlds** — each world is stored in a separate folder with its settings, history, and memory
+- **Story Cards** — notes with triggers; relevant cards are automatically included in the prompt
+- **Memory Bank** — the AI indexes previous turns and retrieves relevant memories using keywords
+- **Automatic Summarization** — periodically compresses the chronicle into `summary.txt`
+- **Streaming Responses** — the Game Master's response appears as it is generated
+- **Context Management** — token counting and history trimming to fit the model's context window
 
-## Запуск
+## Launch
 
-1. Установите релиз и распакуйте в отдельную папку.
-2. Запустите exe.
-3. Запустите локальную модель и локальный сервер.
+1. Download the release and extract it into a separate folder.
+2. Run the `.exe`.
+3. Start your local model and local server.
 
-## Быстрый старт
+## Quick Start
 
-1. При первом запуске создайте мир через кнопку **➕** или **🔄 Миры → Создать**.
-2. Заполните вкладки: инструкции ИИ, основы сюжета, авторские пометки, карточки историй (по желанию).
-3. Заполните вкладку краткого содержания, где опишите ситуацию, где хотите начать историю.
-4. Напишите действие в поле ввода (или оставьте его пустым) и нажмите **▶ Отправить** (или Enter).
-5. При необходимости откройте **⚙️ Настройки ИИ** и подстройте температуру, размер контекста и интервалы.
+1. On the first launch, create a world using the **➕** button or **🔄 Worlds → Create**.
+2. Fill in the tabs: AI instructions, plot basics, author notes, and story cards (optional).
+3. Fill in the summary tab with a description of the situation where you want the story to begin.
+4. Enter an action in the input field (or leave it empty) and press **▶ Send** (or Enter).
+5. If necessary, open **⚙️ AI Settings** and adjust the temperature, context size, and intervals.
 
-## Интерфейс
+## Interface
 
-### Верхняя панель
+### Top Bar
 
-| Элемент | Назначение |
-|---------|------------|
-| Выбор мира | Переключение между сохранёнными мирами |
-| **📝 Сумм.: ВКЛ/ВЫКЛ** | Включение/выключение автосуммаризации |
-| **🧠 Память: ВКЛ/ВЫКЛ** | Включение/выключение банка памяти |
-| **📁 Файлы мира** | Редактирование текстовых файлов мира |
-| **📇 Карточки** | Редактор карточек историй |
-| **🔄 Миры** | Создание, загрузка, удаление миров |
-| **⚙️ Настройки ИИ** | Параметры генерации и функций |
+| Element | Purpose |
+|---------|---------|
+| World Selection | Switch between saved worlds |
+| **📝 Summary: ON/OFF** | Enable/disable automatic summarization |
+| **🧠 Memory: ON/OFF** | Enable/disable the memory bank |
+| **📁 World Files** | Edit the world's text files |
+| **📇 Cards** | Story card editor |
+| **🔄 Worlds** | Create, load, and delete worlds |
+| **⚙️ AI Settings** | Generation and feature settings |
 
-### Панель действий
+### Action Bar
 
-| Кнопка | Назначение |
-|--------|------------|
-| **🔁 Реролл** | Перегенерировать последний ответ мастера |
-| **🧠 Память** | Просмотр банка памяти, ручная индексация |
-| **📋 Промпт** | Последний отправленный промпт |
-| **✏️ Изменить** | Ручное редактирование ответа мастера |
-| **📝 Суммаризация** | Принудительное обновление summary |
-| **⏪ Отменить ход** | Удалить последнее сообщение |
-| **❓ Дальше?** | Описать желаемые следующие события |
+| Button | Purpose |
+|--------|---------|
+| **🔁 Reroll** | Regenerate the last Game Master response |
+| **🧠 Memory** | View the memory bank, manually index memories |
+| **📋 Prompt** | View the last prompt sent to the model |
+| **✏️ Edit** | Manually edit the Game Master's response |
+| **📝 Summarize** | Force an update of the summary |
+| **⏪ Undo Turn** | Delete the last message |
+| **❓ What's Next?** | Describe the events you want to happen next |
 
-## Структура мира
+## World Structure
 
-Каждый мир — папка в каталоге `worlds/`:
+Each world is a folder inside the `worlds/` directory:
 
-```
+```text
 worlds/
-├── settings.json              # Глобальные настройки приложения
-└── Название мира/
-    ├── ai_instructions.txt    # Системные инструкции для мастера
-    ├── plot_basics.txt        # Сеттинг и завязка
-    ├── author_notes.txt       # Стиль, тон, пожелания автора
-    ├── summary.txt            # Сжатая хроника (обновляется автоматически)
-    ├── story_cards.json       # Карточки историй
-    ├── memory_bank.json       # Банк памяти
-    └── history.json           # История текущей сессии
+├── settings.json              # Global application settings
+└── World Name/
+    ├── ai_instructions.txt    # System instructions for the Game Master
+    ├── plot_basics.txt        # Setting and initial plot
+    ├── author_notes.txt       # Style, tone, and author's preferences
+    ├── summary.txt            # Compressed chronicle (updated automatically)
+    ├── story_cards.json       # Story cards
+    ├── memory_bank.json       # Memory bank
+    └── history.json           # Current session history
 ```
 
-## Карточки историй
+## Story Cards
 
-Карточки заменяют старый файл `characters.txt`. Каждая карточка содержит:
+Story Cards replace the old `characters.txt` file. Each card contains:
 
-- **Название** — заголовок (персонаж, локация, фракция и т.д.)
-- **Описание** — подробная информация для ИИ
-- **Триггеры** — ключевые слова через запятую
+- **Title** — a heading (character, location, faction, etc.)
+- **Description** — detailed information for the AI
+- **Triggers** — comma-separated keywords
 
-При каждом ходе в промпт попадают карточки, чьи триггеры совпали с вводом игрока и недавней историей. **Пустые триггеры** означают, что карточка всегда активна.
+On each turn, cards whose triggers match the player's input and recent history are included in the prompt. **Empty triggers** mean that the card is always active.
 
-Пример `story_cards.json`:
+Example `story_cards.json`:
 
 ```json
 {
   "cards": [
     {
       "id": "card_001",
-      "title": "Арион",
-      "description": "Арион это искатель приключений и воин. Носит кожаную броню...",
-      "triggers": ["арион", "герой", "воин"]
+      "title": "Arion",
+      "description": "Arion is an adventurer and warrior. He wears leather armor...",
+      "triggers": ["arion", "hero", "warrior"]
     },
     {
       "id": "card_002",
-      "title": "Таверна «Пьяный дракон»",
-      "description": "Шумное заведение на окраине города...",
-      "triggers": ["таверна", "дракон", "бармен"]
+      "title": "The Drunken Dragon Tavern",
+      "description": "A noisy establishment on the outskirts of the city...",
+      "triggers": ["tavern", "dragon", "bartender"]
     }
   ]
 }
 ```
 
-## Банк памяти
+## Memory Bank
 
-Каждые N ходов (по умолчанию — 5) ИИ анализирует новый фрагмент сессии и сохраняет запись с:
+Every N turns (5 by default), the AI analyzes a new fragment of the session and saves an entry containing:
 
-- кратким описанием событий;
-- ключевыми словами;
-- локацией и упомянутыми NPC.
+- a brief description of events;
+- keywords;
+- the location and mentioned NPCs.
 
-При следующих ходах релевантные воспоминания добавляются в промпт. Это помогает не забывать детали длинных кампаний.
+During subsequent turns, relevant memories are added to the prompt. This helps preserve details during long campaigns.
 
-## Суммаризация
+## Summarization
 
-Каждые N ходов (по умолчанию — 10) ИИ обновляет `summary.txt` — сжатую хронику всей истории. Файл учитывает предыдущее summary, поэтому важные факты сохраняются даже когда свежая история обрезается из-за лимита контекста.
+Every N turns (10 by default), the AI updates `summary.txt` — a compressed chronicle of the entire story. The file takes the previous summary into account, so important facts are preserved even when recent history is trimmed due to the context limit.
 
-Автосуммаризацию и банк памяти можно отключить кнопками в верхней панели или в настройках. Ручные кнопки **📝 Суммаризация** и **🧠 Память** работают независимо от автоматики.
+Automatic summarization and the memory bank can be disabled using the buttons in the top bar or in the settings. The manual **📝 Summarize** and **🧠 Memory** buttons work independently of the automatic features.
 
-## Настройки ИИ
+## AI Settings
 
-Глобальные параметры хранятся в `worlds/settings.json`, можете менять через файл или в приложении:
+Global parameters are stored in `worlds/settings.json`. You can change them either by editing the file or through the application:
 
-| Параметр | По умолчанию | Описание |
-|----------|--------------|----------|
-| `temperature` | `0.7` | Креативность ответов |
-| `max_tokens` | `300` | Максимум токенов в ответе |
-| `context_size` | `16384` | Размер контекстного окна модели |
-| `summary_interval` | `10` | Автосуммаризация каждые N ходов |
-| `memory_interval` | `5` | Индексация памяти каждые N ходов |
-| `memory_top_k` | `5` | Сколько воспоминаний/карточек подставлять в промпт |
-| `stream_mode` | `true` | Потоковая генерация |
-| `summary_enabled` | `true` | Автосуммаризация вкл/выкл |
-| `memory_enabled` | `true` | Банк памяти вкл/выкл |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `temperature` | `0.7` | Response creativity |
+| `max_tokens` | `300` | Maximum number of tokens in a response |
+| `context_size` | `16384` | Model context window size |
+| `summary_interval` | `10` | Automatically summarize every N turns |
+| `memory_interval` | `5` | Index memories every N turns |
+| `memory_top_k` | `5` | Number of memories/cards to include in the prompt |
+| `stream_mode` | `true` | Streaming generation |
+| `summary_enabled` | `true` | Enable/disable automatic summarization |
+| `memory_enabled` | `true` | Enable/disable the memory bank |
 
-## Советы
+## Tips
 
-- Для длинных кампаний держите включёнными суммаризацию и банк памяти.
-- Выносите места, персонажей и другое, что бы вы хотели бы видеть в мире, в карточки историй.
-- Используйте **📋 Промпт**, чтобы понять, что именно видит модель на каждом ходе.
+- For long campaigns, keep summarization and the memory bank enabled.
+- Put locations, characters, and other elements you want to exist in the world into Story Cards.
+- Use **📋 Prompt** to see exactly what the model receives on each turn.
 
+## License / Usage
 
-
-
-Проект для личного использования. 
+This project is intended for personal use.
