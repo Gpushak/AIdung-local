@@ -60,16 +60,26 @@ class DialogMixin:
                 return
             name = listbox.get(sel[0])
             if messagebox.askyesno(self.tr("dialog.delete_world"), self.tr("dialog.delete_world_q", name=name)):
+                remaining_worlds = [w for w in get_world_list() if w != name]
+                current_world_was_deleted = self.world_name == name
+
                 shutil.rmtree(BASE_DIR / name)
                 listbox.delete(sel[0])
-                if self.world_name == name:
+
+                if current_world_was_deleted:
                     self.current_world_path = None
                     self.world_name = None
-                    self.refresh_world_combobox()
                     self.history = []
                     self.turns_since_summary = 0
                     self.turns_since_memory = 0
                     self.memory_bank = {"last_indexed_turn": 0, "entries": []}
+
+                    if remaining_worlds:
+                        next_world = remaining_worlds[0]
+                        win.destroy()
+                        self.load_world(next_world)
+                        return
+
                     self.update_summary_label()
                     self.update_memory_label()
                     self.refresh_chat_display()
