@@ -28,7 +28,7 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 
 1. On the first launch, create a world using the **➕** button or **🔄 Worlds → Create**.
 2. Fill in the tabs: AI instructions, plot basics, author notes, and story cards (optional).
-3. Fill in the summary tab with a description of the situation where you want the story to begin.
+3. Fill in the introduction tab with a description of the situation where you want the story to begin.
 4. Enter an action in the input field (or leave it empty) and press **▶ Send** (or Enter).
 5. If necessary, open **⚙️ AI Settings** and adjust the temperature, context size, and intervals.
 
