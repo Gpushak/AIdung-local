@@ -195,7 +195,7 @@ TRANSLATIONS = {
 
 Ответь ТОЛЬКО валидным JSON:
 {{"summary": "...", "keys": ["...", "..."], "location": "...", "npcs": ["..."]}}""",
-        "prompt.summary": """Перед тобой история текстовой ролевой игры, её старое краткое содержание и карточки истории.
+        "prompt.summary": """Перед тобой история текстовой ролевой игры и её старое содержание.
 Твоя задача: составить обновленное, чистое и емкое КРАТКОЕ СОДЕРЖАНИЕ (summary).
 ПРАВИЛА:
 1. Сформируй краткую историю в хронологическом порядке.
@@ -205,9 +205,6 @@ TRANSLATIONS = {
 
 СТАРОЕ КРАТКОЕ СОДЕРЖАНИЕ:
 {old_summary}
-
-КАРТОЧКИ ИСТОРИИ:
-{cards}
 
 АКТУАЛЬНАЯ ИСТОРИЯ ИГРЫ:
 {history}
@@ -406,7 +403,7 @@ FRAGMENT:
 
 Reply with VALID JSON only:
 {{"summary": "...", "keys": ["...", "..."], "location": "...", "npcs": ["..."]}}""",
-        "prompt.summary": """You are given a text RPG history, its previous summary, and story cards.
+        "prompt.summary": """You are given a text RPG history and its previous summary.
 Your task: write an updated, clean, compact SUMMARY.
 RULES:
 1. Form a short history in chronological order.
@@ -416,9 +413,6 @@ RULES:
 
 OLD SUMMARY:
 {old_summary}
-
-STORY CARDS:
-{cards}
 
 CURRENT GAME HISTORY:
 {history}
