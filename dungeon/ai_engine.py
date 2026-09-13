@@ -7,7 +7,7 @@ from threading import Thread
 import requests
 
 from .config import INTRODUCTION_FILE, WORLD_FILES
-from .i18n import PLAYER_PREFIX, t
+from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
 from .memory import (
     count_completed_turns,
     format_memory_block,
@@ -16,7 +16,7 @@ from .memory import (
     retrieve_relevant_memories,
     save_memory_bank,
 )
-from .story_cards import format_all_cards_for_summary, format_story_cards_block, retrieve_relevant_cards
+from .story_cards import format_story_cards_block, retrieve_relevant_cards
 from .storage import save_history
 from .text_utils import (
     StreamThinkFilter,
@@ -105,7 +105,7 @@ class AIEngineMixin:
             if not messages:
                 return
 
-            fallback_text = "\n".join(messages)
+            fallback_text = "\n".join(localize_history(self.language, messages))
             prompt = t(self.language, "prompt.memory_index", fragment=fallback_text)
 
             payload = self._api_payload(
@@ -192,14 +192,14 @@ class AIEngineMixin:
                 relevant_memories = retrieve_relevant_memories(
                     retrieval_query, self.memory_bank, top_k=self.memory_top_k
                 )
-                memory_block = format_memory_block(relevant_memories)
+                memory_block = format_memory_block(relevant_memories, self.language)
                 if memory_block:
                     context += memory_block
 
             relevant_cards = retrieve_relevant_cards(
                 retrieval_query, self.story_cards, top_k=self.memory_top_k
             )
-            cards_block = format_story_cards_block(relevant_cards)
+            cards_block = format_story_cards_block(relevant_cards, self.language)
             if cards_block:
                 context += cards_block
 
@@ -226,7 +226,7 @@ class AIEngineMixin:
                 else:
                     break
 
-            history_text = "\n".join(short_history)
+            history_text = "\n".join(localize_history(self.language, short_history))
             system_final_content = f"""{context}\n{t(self.language, 'prompt.history_header')}\n{history_text}"""
             prompt_tokens = count_tokens(system_final_content) + count_tokens(user_content)
 
@@ -245,7 +245,16 @@ class AIEngineMixin:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stream=self.stream_mode,
-                stop=["\nИгрок:", "Игрок:", "<|im_end|>", "<|eot_id|>", "```", "---"],
+                stop=[
+                    f"\n{PLAYER_PREFIX}",
+                    PLAYER_PREFIX,
+                    f"\n{t(self.language, 'hist.player')}",
+                    t(self.language, "hist.player"),
+                    "<|im_end|>",
+                    "<|eot_id|>",
+                    "```",
+                    "---",
+                ],
             )
 
             if self.stream_mode:
@@ -299,7 +308,7 @@ class AIEngineMixin:
 
             self.root.after(0, lambda f=final_narration: self.finalize_dm_stream(f))
 
-            self.history.append(f"Мастер: {final_narration}")
+            self.history.append(f"{DM_PREFIX} {final_narration}")
             save_history(self.current_world_path, self.history)
 
             completion_tokens = count_tokens(final_narration)
@@ -363,12 +372,10 @@ class AIEngineMixin:
             old_summary = (
                 summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else t(self.language, "prompt.none")
             )
-            story_cards_content = format_all_cards_for_summary(self.story_cards, self.language)
             prompt_template_base = t(
                 self.language,
                 "prompt.summary",
                 old_summary=old_summary,
-                cards=story_cards_content,
                 history="",
             )
 
@@ -393,13 +400,12 @@ class AIEngineMixin:
                 else:
                     break
 
-            history_text = "\n".join(short_history)
+            history_text = "\n".join(localize_history(self.language, short_history))
 
             prompt = t(
                 self.language,
                 "prompt.summary",
                 old_summary=old_summary,
-                cards=story_cards_content,
                 history=history_text,
             )
 

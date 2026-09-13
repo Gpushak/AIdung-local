@@ -115,14 +115,3 @@ def format_story_cards_block(cards, lang="ru"):
         )
         block += f"[{card['title']}]{trigger_hint}\n{card.get('description', '')}\n\n"
     return block
-
-
-def format_all_cards_for_summary(cards_data, lang="ru"):
-    cards = cards_data.get("cards", [])
-    if not cards:
-        return t(lang, "prompt.cards_missing")
-    lines = []
-    untitled = t(lang, "cards.untitled")
-    for card in cards:
-        lines.append(f"=== {card.get('title', untitled)} ===\n{card.get('description', '')}")
-    return "\n\n".join(lines)

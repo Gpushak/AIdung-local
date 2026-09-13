@@ -52,7 +52,7 @@ TRANSLATIONS = {
         "busy.background": "⏳ Фоновые задачи...",
         "busy.summary": "⏳ Суммаризация...",
         "busy.memory": "⏳ Память...",
-        "status.generating": "● Generation...",
+        "status.generating": "● Генерация...",
         "status.summary_memory": "● Суммаризация и память...",
         "status.summary": "● Суммаризация...",
         "status.memory": "● Индексация памяти...",
@@ -112,6 +112,7 @@ TRANSLATIONS = {
         "dialog.prompt_title": "📋 Последний промпт",
         "dialog.no_prompt": "Нет данных о запросе.",
         "dialog.prompt_time": "=== ВРЕМЯ ЗАПРОСА ===\n{time}\n\n=== ПРИМЕРНОЕ КОЛ-ВО ТОКЕНОВ ===\n{tokens}\n\n",
+        "dialog.prompt_body": "=== SYSTEM ===\n{system}\n\n=== USER ===\n{user}\n",
         "dialog.memory_title": "🧠 Банк памяти",
         "dialog.no_world": "Мир не выбран.",
         "dialog.memory_empty": "Банк памяти пуст. Записи появятся после нескольких ходов.",
@@ -320,6 +321,7 @@ TRANSLATIONS = {
         "dialog.prompt_title": "📋 Last prompt",
         "dialog.no_prompt": "No prompt data yet.",
         "dialog.prompt_time": "=== REQUEST TIME ===\n{time}\n\n=== APPROXIMATE TOKEN COUNT ===\n{tokens}\n\n",
+        "dialog.prompt_body": "=== SYSTEM ===\n{system}\n\n=== USER ===\n{user}\n",
         "dialog.memory_title": "🧠 Memory bank",
         "dialog.no_world": "No world selected.",
         "dialog.memory_empty": "Memory bank is empty. Entries appear after a few turns.",
@@ -441,7 +443,6 @@ TEMPLATES = {
 - Если ввод заканчивается на середине предложения, продолжайте с того места, где он был прерван.
 - Подробно опишите внешность и характерные черты персонажей.
 
-Ограничение на ответ - не более 800 символов!
 Разрешено принимать решения и писать за пользователя!
 """,
         "plot_basics.txt": "Мир фэнтези.\nВы искатель приключений.\nУ вас есть меч и щит.\nВы носите легкую кожаную броню.",
@@ -467,7 +468,6 @@ Instructions you (the DM) must follow when writing:
 - If input ends mid-sentence, continue from where it was interrupted.
 - Describe characters' appearance and distinctive traits in detail.
 
-Reply limit — no more than 800 characters!
 You may make decisions and write for the user!
 """,
         "plot_basics.txt": "A fantasy world.\nYou are an adventurer.\nYou have a sword and a shield.\nYou wear light leather armor.",
@@ -481,9 +481,9 @@ STORY_CARD_DEMOS = {
         "cards": [
             {
                 "id": "card_001",
-                "title": "Главный герой",
-                "description": "Имя: Арион\nКласс: Воин\nОружие: Длинный меч и щит\nНавыки: Атлетика, Выживание",
-                "triggers": ["арион", "герой", "воин", "игрок"],
+                "title": "Арион",
+                "description": "Арион - мужчина, 21 год.\nОн воин, орудует длинным мечом и щитом.\nИмеет красные волосы среднего размера, одет в кожанную броню",
+                "triggers": ["арион", "воин"],
             }
         ]
     },
@@ -491,9 +491,9 @@ STORY_CARD_DEMOS = {
         "cards": [
             {
                 "id": "card_001",
-                "title": "The Hero",
-                "description": "Name: Arion\nClass: Warrior\nWeapons: Longsword and shield\nSkills: Athletics, Survival",
-                "triggers": ["arion", "hero", "warrior", "player"],
+                "title": "Arion",
+                "description": "Arion is a man, 21 years old.\nHe is a warrior, wields a long sword and a shield.\nHe has medium‑length red hair and is dressed in leather armor.",
+                "triggers": ["arion", "warrior",],
             }
         ]
     },

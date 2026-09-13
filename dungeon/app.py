@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .ai_engine import AIEngineMixin
-from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, WINDOW_SIZE
+from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WINDOW_SIZE
 from .dialogs import DialogMixin
 from .i18n import (
     DM_PREFIX,
@@ -365,16 +365,14 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area.delete("1.0", tk.END)
         if self.history:
             for msg in self.history:
-                if msg.startswith("Игрок:"):
-                    player_text = msg[len("Игрок:") :].strip()
-                    if player_text:
-                        self.text_area.insert(tk.END, f"\n🎮 {player_text}\n", "player")
-                elif msg.startswith("Мастер:"):
-                    dm_text = msg[len("Мастер:") :].strip()
-                    self.text_area.insert(tk.END, f"\n📜 {dm_text}\n", "dm")
-                elif msg.startswith(INTRO_PREFIX):
-                    intro_text = msg[len(INTRO_PREFIX) :].strip()
-                    self.text_area.insert(tk.END, f"\n📖 {intro_text}\n", "intro")
+                if is_player_msg(msg):
+                    text = player_text(msg)
+                    if text:
+                        self.text_area.insert(tk.END, f"\n🎮 {text}\n", "player")
+                elif is_dm_msg(msg):
+                    self.text_area.insert(tk.END, f"\n📜 {dm_text(msg)}\n", "dm")
+                elif is_intro_msg(msg):
+                    self.text_area.insert(tk.END, f"\n📖 {intro_text(msg)}\n", "intro")
                 else:
                     self.text_area.insert(tk.END, f"\n{msg}\n", "system")
         self.text_area.configure(state="disabled")
@@ -493,12 +491,12 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if self.is_busy() or not self.history or not self.current_world_path:
             return
 
-        if self.history[-1].startswith("Мастер:"):
+        if is_dm_msg(self.history[-1]):
             self.history.pop()
 
         last_player_input = ""
-        if self.history and self.history[-1].startswith("Игрок:"):
-            last_player_input = self.history[-1][len("Игрок:") :].strip()
+        if self.history and is_player_msg(self.history[-1]):
+            last_player_input = player_text(self.history[-1])
 
         save_history(self.current_world_path, self.history)
         self.refresh_chat_display()
@@ -546,7 +544,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def start_dm_stream(self):
         self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, "\nМастер: ", "dm")
+        self.text_area.insert(tk.END, f"\n{self.tr('hist.dm')} ", "dm")
         self.stream_start_index = self.text_area.index("end-1c")
         self.text_area.configure(state="disabled")
         self.text_area.see(tk.END)

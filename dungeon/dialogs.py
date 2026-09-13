@@ -5,8 +5,8 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
-from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, STORY_CARDS_LABEL, WORLD_FILES
-from .i18n import default_templates, t
+from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WORLD_FILES
+from .i18n import DM_PREFIX, default_templates, dm_text, is_dm_msg
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .story_cards import (
     default_story_cards,
@@ -187,8 +187,7 @@ class DialogMixin:
         self.file_listbox.pack(fill=ctk.BOTH, expand=True, padx=5, pady=5)
         self.world_file_keys = list(WORLD_FILES.keys()) + [STORY_CARDS_KEY]
         for key in self.world_file_keys:
-            label = STORY_CARDS_LABEL if key == STORY_CARDS_KEY else WORLD_FILES[key]
-            self.file_listbox.insert(tk.END, label)
+            self.file_listbox.insert(tk.END, self.world_file_label(key))
 
         right_frame = ctk.CTkFrame(win)
         right_frame.pack(side=ctk.RIGHT, fill=ctk.BOTH, expand=True, padx=(0, 10), pady=10)
@@ -839,13 +838,13 @@ class DialogMixin:
             return
         dm_index = -1
         for i in range(len(self.history) - 1, -1, -1):
-            if self.history[i].startswith("Мастер:"):
+            if is_dm_msg(self.history[i]):
                 dm_index = i
                 break
         if dm_index == -1:
             return
 
-        current_text = self.history[dm_index][len("Мастер:") :].strip()
+        current_text = dm_text(self.history[dm_index])
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.edit_dm"))
         win.geometry("600x500")
@@ -864,7 +863,7 @@ class DialogMixin:
             new_text = editor.get("1.0", tk.END).strip()
             if not new_text:
                 return
-            self.history[dm_index] = f"Мастер: {new_text}"
+            self.history[dm_index] = f"{DM_PREFIX} {new_text}"
             save_history(self.current_world_path, self.history)
             self.refresh_chat_display()
             win.destroy()
@@ -891,11 +890,8 @@ class DialogMixin:
             return
 
         data = self.last_sent_prompt
-        full_text = (
-            f"=== ВРЕМЯ ЗАПРОСА ===\n{data['time']}\n\n"
-            f"=== ПРИМЕРНОЕ КОЛ-ВО ТОКЕНОВ ===\n{data['tokens']}\n\n"
-            f"=== SYSTEM ===\n{data['system']}\n\n"
-            f"=== USER ===\n{data['user']}\n"
+        full_text = self.tr("dialog.prompt_time", time=data["time"], tokens=data["tokens"]) + self.tr(
+            "dialog.prompt_body", system=data["system"], user=data["user"]
         )
 
         win = ctk.CTkToplevel(self.root)
@@ -946,14 +942,20 @@ class DialogMixin:
 
         lines = []
         for mem in entries:
-            keys = ", ".join(mem.get("keys", []))
-            npcs = ", ".join(mem.get("npcs", []))
+            keys = ", ".join(mem.get("keys", [])) or "—"
+            npcs = ", ".join(mem.get("npcs", [])) or "—"
             location = mem.get("location") or "—"
             lines.append(
-                f"=== {mem['id']} | ходы {mem.get('turn_start', '?')}-{mem.get('turn_end', '?')} ===\n"
-                f"Ключи: {keys or '—'}\n"
-                f"NPC: {npcs or '—'} | Локация: {location}\n"
-                f"{mem.get('summary', '')}\n"
+                self.tr(
+                    "dialog.memory_entry",
+                    id=mem["id"],
+                    start=mem.get("turn_start", "?"),
+                    end=mem.get("turn_end", "?"),
+                    keys=keys,
+                    npcs=npcs,
+                    location=location,
+                    summary=mem.get("summary", ""),
+                )
             )
         viewer.insert("1.0", "\n".join(lines))
         viewer.configure(state="disabled")

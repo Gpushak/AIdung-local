@@ -25,7 +25,6 @@ INTRODUCTION_FILE = "introduction.txt"
 
 DEFAULT_TEMPLATES = default_templates("ru")
 STORY_CARDS_KEY = "__story_cards__"
-STORY_CARDS_LABEL = "Story cards"
 
 COLORS = {
     "accent": "#e6b450",
