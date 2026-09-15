@@ -274,7 +274,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         row1_commands = [
             ("btn.next", self.prompt_next_turn),
             ("btn.reroll", self.regenerate_action),
-            ("btn.edit", self.edit_last_dm_message),
+            ("btn.edit_last", self.edit_last_message),
             ("btn.prompt", self.show_last_prompt),
         ]
         row2_commands = [

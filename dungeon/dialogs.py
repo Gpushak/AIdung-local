@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 
 from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WORLD_FILES
-from .i18n import DM_PREFIX, default_templates, dm_text, is_dm_msg
+from .i18n import DM_PREFIX, PLAYER_PREFIX, default_templates, dm_text, is_dm_msg, is_player_msg, player_text
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .story_cards import (
     default_story_cards,
@@ -833,42 +833,139 @@ class DialogMixin:
         if messagebox.askyesno(self.tr("dialog.quit"), self.tr("dialog.quit_q")):
             self.on_closing()
 
-    def edit_last_dm_message(self):
+    def edit_last_message(self):
         if not self.current_world_path or not self.history:
             return
-        dm_index = -1
-        for i in range(len(self.history) - 1, -1, -1):
-            if is_dm_msg(self.history[i]):
-                dm_index = i
-                break
-        if dm_index == -1:
+
+        # Find the last message (either DM or player)
+        last_msg_index = len(self.history) - 1
+        last_msg = self.history[last_msg_index]
+
+        if is_dm_msg(last_msg):
+            self._edit_message_at_index(last_msg_index, "dm")
+        elif is_player_msg(last_msg):
+            self._edit_message_at_index(last_msg_index, "player")
+        else:
+            # If last message is system/intro, find the last non-system message
+            for i in range(len(self.history) - 1, -1, -1):
+                msg = self.history[i]
+                if is_dm_msg(msg) or is_player_msg(msg):
+                    msg_type = "dm" if is_dm_msg(msg) else "player"
+                    self._edit_message_at_index(i, msg_type)
+                    return
+            # No editable messages found
             return
 
-        current_text = dm_text(self.history[dm_index])
+    def _edit_message_at_index(self, index, msg_type):
+        """Helper method to edit a message at given index with navigation."""
+        # Find all editable message indices
+        editable_indices = []
+        for i, msg in enumerate(self.history):
+            if is_dm_msg(msg) or is_player_msg(msg):
+                editable_indices.append(i)
+        
+        if not editable_indices:
+            return
+        
+        # Find current position in editable indices
+        try:
+            current_pos = editable_indices.index(index)
+        except ValueError:
+            return
+        
+        def update_editor_for_position(pos):
+            idx = editable_indices[pos]
+            msg = self.history[idx]
+            if is_dm_msg(msg):
+                current_text = dm_text(msg)
+                dialog_title = self.tr("dialog.edit_dm")
+                dialog_label = self.tr("dialog.edit_dm_label")
+                prefix = DM_PREFIX
+            else:
+                current_text = player_text(msg)
+                dialog_title = self.tr("dialog.edit_player")
+                dialog_label = self.tr("dialog.edit_player_label")
+                prefix = PLAYER_PREFIX
+            
+            title_label.configure(text=f"{dialog_title} ({pos + 1}/{len(editable_indices)})")
+            info_label.configure(text=dialog_label)
+            editor.delete("1.0", tk.END)
+            editor.insert(tk.END, current_text)
+            
+            # Update button states
+            prev_btn.configure(state=tk.NORMAL if pos > 0 else tk.DISABLED)
+            next_btn.configure(state=tk.NORMAL if pos < len(editable_indices) - 1 else tk.DISABLED)
+            
+            return idx, prefix
+        
+        def navigate_prev():
+            nonlocal current_pos, current_index, current_prefix
+            if current_pos > 0:
+                current_pos -= 1
+                current_index, current_prefix = update_editor_for_position(current_pos)
+        
+        def navigate_next():
+            nonlocal current_pos, current_index, current_prefix
+            if current_pos < len(editable_indices) - 1:
+                current_pos += 1
+                current_index, current_prefix = update_editor_for_position(current_pos)
+        
+        if msg_type == "dm":
+            current_text = dm_text(self.history[index])
+            dialog_title = self.tr("dialog.edit_dm")
+            dialog_label = self.tr("dialog.edit_dm_label")
+            prefix = DM_PREFIX
+            success_msg = self.tr("msg.dm_edited")
+        else:
+            current_text = player_text(self.history[index])
+            dialog_title = self.tr("dialog.edit_player")
+            dialog_label = self.tr("dialog.edit_player_label")
+            prefix = PLAYER_PREFIX
+            success_msg = self.tr("msg.player_edited")
+        
         win = ctk.CTkToplevel(self.root)
-        win.title(self.tr("dialog.edit_dm"))
-        win.geometry("600x500")
+        win.title(dialog_title)
+        win.geometry("600x550")
         win.transient(self.root)
         win.grab_set()
-
-        ctk.CTkLabel(win, text=self.tr("dialog.edit_dm_label")).pack(pady=(10, 5), anchor=tk.W, padx=15)
-
+        
+        # Title with position
+        title_label = ctk.CTkLabel(win, text=f"{dialog_title} ({current_pos + 1}/{len(editable_indices)})", font=ctk.CTkFont(weight="bold"))
+        title_label.pack(pady=(10, 5), anchor=tk.W, padx=15)
+        
+        # Navigation buttons
+        nav_frame = ctk.CTkFrame(win, fg_color="transparent")
+        nav_frame.pack(fill=ctk.X, padx=15, pady=5)
+        
+        prev_btn = ctk.CTkButton(nav_frame, text=self.tr("dialog.edit_prev"), width=100, command=navigate_prev, state=tk.DISABLED if current_pos == 0 else tk.NORMAL)
+        prev_btn.pack(side=ctk.LEFT, padx=5)
+        
+        next_btn = ctk.CTkButton(nav_frame, text=self.tr("dialog.edit_next"), width=100, command=navigate_next, state=tk.DISABLED if current_pos == len(editable_indices) - 1 else tk.NORMAL)
+        next_btn.pack(side=ctk.RIGHT, padx=5)
+        
+        info_label = ctk.CTkLabel(win, text=dialog_label)
+        info_label.pack(anchor=tk.W, padx=15, pady=(5, 5))
+        
         editor = ctk.CTkTextbox(win, wrap=tk.WORD, font=ctk.CTkFont(size=14))
         editor.pack(fill=ctk.BOTH, expand=True, padx=15, pady=5)
         editor.insert(tk.END, current_text)
         editor.focus_set()
         editor.bind("<Button-3>", self.show_context_menu)
-
+        
+        # Store current editing state
+        current_index = index
+        current_prefix = prefix
+        
         def save_edited_msg():
             new_text = editor.get("1.0", tk.END).strip()
             if not new_text:
                 return
-            self.history[dm_index] = f"{DM_PREFIX} {new_text}"
+            self.history[current_index] = f"{current_prefix} {new_text}"
             save_history(self.current_world_path, self.history)
             self.refresh_chat_display()
             win.destroy()
-            self.add_system_message(self.tr("msg.dm_edited"))
-
+            self.add_system_message(success_msg)
+        
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, pady=15, padx=15)
         ctk.CTkButton(
