@@ -136,6 +136,10 @@ TRANSLATIONS = {
         "cards.delete": "Удалить",
         "cards.delete_q": "Удалить выбранную карточку?",
         "cards.save_with_world": "Сохранятся вместе с миром",
+        "cards.generate_desc": "✨ Сгенерировать описание",
+        "cards.generating": "Генерация описания...",
+        "cards.generate_desc_title": "Генерация описания карточки",
+        "cards.enter_title_first": "Сначала введите название карточки",
         "on": "ВКЛ",
         "off": "ВЫКЛ",
         "summary_enabled_word": "включена",
@@ -216,6 +220,24 @@ TRANSLATIONS = {
 {history}
 
 Выдай только текст нового краткого содержания простым текстом без лишних *, вступлений и Markdown.""",
+        "prompt.card_desc_gen": """Ты помогаешь пользователю создать описание для карточки истории в текстовой RPG.
+
+Контекст мира:
+{world_context}
+
+Название карточки: {card_title}
+
+Базовая информация (plot_basics):
+{plot_basics}
+
+Авторские пометки:
+{author_notes}
+
+Фрагмент истории для контекста:
+{history_fragment}
+
+Создай подробное описание карточки (~5 предложений) в контексте этого мира. Опиши персонажа, локацию или объект, его характеристики, роль в мире. Не используй Markdown, пиши обычным текстом.
+Описание:""",
     },
     "en": {
         "lang.ru": "Русский",
@@ -350,6 +372,10 @@ TRANSLATIONS = {
         "cards.delete": "Delete",
         "cards.delete_q": "Delete the selected card?",
         "cards.save_with_world": "Saved together with the world",
+        "cards.generate_desc": "✨ Generate Description",
+        "cards.generating": "Generating description...",
+        "cards.generate_desc_title": "Generate Card Description",
+        "cards.enter_title_first": "Please enter a card title first",
         "on": "ON",
         "off": "OFF",
         "summary_enabled_word": "enabled",
@@ -430,6 +456,24 @@ CURRENT GAME HISTORY:
 {history}
 
 Output only the new summary as plain text with no extra *, introductions, or Markdown.""",
+        "prompt.card_desc_gen": """You are helping a user create a description for a story card in a text RPG.
+
+World context:
+{world_context}
+
+Card title: {card_title}
+
+Basic information (plot_basics):
+{plot_basics}
+
+Author notes:
+{author_notes}
+
+Story fragment for context:
+{history_fragment}
+
+Create a detailed card description (~5 sentences) in the context of this world. Describe the character, location, or object, its characteristics, and role in the world. Do not use Markdown, write in plain text.
+Description:""",
     },
 }
 

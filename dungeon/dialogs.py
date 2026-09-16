@@ -301,6 +301,18 @@ class DialogMixin:
         )
         hint.pack(anchor=tk.W, padx=5, pady=(0, 8))
 
+        gen_btn_frame = ctk.CTkFrame(right, fg_color="transparent")
+        gen_btn_frame.pack(fill=ctk.X, padx=5, pady=(0, 8))
+        generate_desc_btn = ctk.CTkButton(
+            gen_btn_frame,
+            text=self.tr("cards.generate_desc"),
+            command=lambda: self._generate_card_description(
+                title_entry, desc_text, cards_data, state
+            ),
+            width=180,
+        )
+        generate_desc_btn.pack(side=ctk.LEFT)
+
         btn_row = ctk.CTkFrame(right, fg_color="transparent")
         btn_row.pack(fill=ctk.X, padx=5, pady=5)
 
@@ -436,6 +448,114 @@ class DialogMixin:
 
         refresh_list(select_index=0 if cards_data.get("cards") else None)
         return {"refresh": refresh_list, "save": save_cards}
+
+    def _generate_card_description(self, title_entry, desc_text, cards_data, state):
+        """Generate card description using AI based on title, plot_basics, and history context."""
+        if not self.current_world_path:
+            messagebox.showinfo(
+                self.tr("cards.generate_desc_title"),
+                self.tr("dialog.cards_need_world"),
+            )
+            return
+
+        card_title = title_entry.get().strip()
+        if not card_title:
+            messagebox.showwarning(
+                self.tr("cards.generate_desc_title"),
+                self.tr("cards.enter_title_first"),
+            )
+            return
+
+        from .storage import WORLD_FILES, INTRODUCTION_FILE
+        from .i18n import t
+
+        world_context = ""
+        for fname in WORLD_FILES:
+            if fname in ("summary.txt", INTRODUCTION_FILE):
+                continue
+            path = self.current_world_path / fname
+            if path.exists():
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    world_context += f"=== {fname} ===\n{content}\n"
+
+        summary_path = self.current_world_path / "summary.txt"
+        summary_content = summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else ""
+        if summary_content:
+            from .i18n import t
+            world_context += t(self.language, "prompt.summary_header", text=summary_content)
+
+        author_notes_path = self.current_world_path / "author_notes.txt"
+        author_notes = author_notes_path.read_text(encoding="utf-8").strip() if author_notes_path.exists() else ""
+
+        history_fragment = ""
+        preview_msgs = []
+        preview_tokens = 0
+        from .tokens import count_tokens
+        # Резервируем буфер для промпта, ответа и безопасности
+        available_for_history = self.context_size - 1500
+        for msg in reversed(self.history):
+            msg_tokens = count_tokens(msg) + 1
+            if preview_tokens + msg_tokens > available_for_history:
+                break
+            preview_msgs.insert(0, msg)
+            preview_tokens += msg_tokens
+        if preview_msgs:
+            history_fragment = "\n".join(preview_msgs)
+
+        plot_basics = desc_text.get("1.0", tk.END).strip()
+
+        prompt = t(
+            self.language,
+            "prompt.card_desc_gen",
+            world_context=world_context or t(self.language, "prompt.none"),
+            card_title=card_title,
+            plot_basics=plot_basics or t(self.language, "prompt.none"),
+            author_notes=author_notes or t(self.language, "prompt.none"),
+            history_fragment=history_fragment or t(self.language, "prompt.none"),
+        )
+
+        gen_btn = desc_text.master.winfo_children()[2] if len(desc_text.master.winfo_children()) > 2 else None
+        if gen_btn:
+            gen_btn.configure(state="disabled", text=self.tr("cards.generating"))
+
+        def run_generation():
+            try:
+                payload = self._api_payload(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=400,
+                    stream=False,
+                )
+                response = self._api_post(payload, timeout=120)
+                response.raise_for_status()
+                from .text_utils import extract_message_text
+                generated_desc = extract_message_text(response.json()["choices"][0]["message"])
+                generated_desc = generated_desc.strip()
+
+                self.root.after(
+                    0,
+                    lambda: [
+                        desc_text.delete("1.0", tk.END),
+                        desc_text.insert("1.0", generated_desc),
+                    ],
+                )
+            except Exception as e:
+                err_msg = str(e)
+                self.root.after(
+                    0,
+                    lambda msg=err_msg: messagebox.showerror(
+                        self.tr("cards.generate_desc_title"),
+                        self.tr("msg.error", msg=msg),
+                    ),
+                )
+            finally:
+                self.root.after(
+                    0,
+                    lambda: gen_btn.configure(state="normal", text=self.tr("cards.generate_desc")) if gen_btn else None,
+                )
+
+        Thread(target=run_generation, daemon=True).start()
 
     def open_story_cards_editor(self):
         if not self.current_world_path:
