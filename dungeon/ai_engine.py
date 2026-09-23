@@ -211,7 +211,10 @@ class AIEngineMixin:
             system_base_text = f"{context}\n{t(self.language, 'prompt.history_header')}\n"
             static_tokens = count_tokens(system_base_text)
             user_tokens = count_tokens(user_content)
-            safety_buffer = 200
+            # Небольшой фиксированный запас: оценка токенов теперь точная
+            # (o200k/cl100k через tiktoken), поэтому раздутый буфер лишь
+            # напрочь отрезал бы историю от доступного контекстного окна.
+            safety_buffer = 64
 
             available_history_tokens = (
                 self.context_size - self.max_tokens - static_tokens - user_tokens - safety_buffer
