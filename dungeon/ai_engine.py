@@ -45,6 +45,9 @@ class AIEngineMixin:
         payload["reasoning_effort"] = "none"
         payload["enable_thinking"] = False
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # DeepSeek-specific parameters
+        payload["thinking"] = {"enabled": False}
+        payload["no_thinking"] = True
         return payload
 
     def _api_post(self, payload, **request_kwargs):
@@ -60,6 +63,8 @@ class AIEngineMixin:
                     "reasoning_effort",
                     "enable_thinking",
                     "chat_template_kwargs",
+                    "thinking",
+                    "no_thinking",
                 }
             }
             if stripped != payload:
@@ -109,7 +114,7 @@ class AIEngineMixin:
             prompt = t(self.language, "prompt.memory_index", fragment=fallback_text)
 
             payload = self._api_payload(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
                 temperature=0.2,
                 max_tokens=350,
                 stream=False,
@@ -239,7 +244,15 @@ class AIEngineMixin:
 
             payload = self._api_payload(
                 messages=[
-                    {"role": "system", "content": system_final_content},
+                    {
+                        "role": "system",
+                        "content": system_final_content
+                        + "\n\n"
+                        + t(
+                            self.language,
+                            "prompt.no_reasoning",
+                        ),
+                    },
                     {"role": "user", "content": user_content},
                 ],
                 temperature=self.temperature,
@@ -254,6 +267,8 @@ class AIEngineMixin:
                     "<|eot_id|>",
                     "```",
                     "---",
+                    "<think>",
+                    "</think>",
                 ],
             )
 
@@ -410,7 +425,7 @@ class AIEngineMixin:
             )
 
             payload = self._api_payload(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
                 temperature=0.3,
                 max_tokens=summary_max_tokens,
                 stream=False,
