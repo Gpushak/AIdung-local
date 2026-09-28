@@ -196,8 +196,8 @@ TRANSLATIONS = {
         "prompt.none": "Отсутствует.",
         "prompt.memory_index": """Проанализируй фрагмент текстовой RPG-сессии.
 Сделай:
-1. summary — 3-6 предложений, только ключевые события и факты (имена, предметы, решения)
-2. keys — до 3 ключевых слов для поиска, только самые важные! (имена NPC, локации, предметы, события)
+1. summary — 2-4 предложения, только ключевые события и факты (имена, предметы, решения)
+2. keys — до 3 ключевых СЛОВ (не словосочетаний) для поиска, только самые важные! (имена NPC, локации, предметы, события)
 3. location — текущая локация или null
 4. npcs — список упомянутых NPC
 
@@ -433,7 +433,7 @@ TRANSLATIONS = {
         "prompt.none": "None.",
         "prompt.memory_index": """Analyze this fragment of a text RPG session.
 Produce:
-1. summary — 3-6 sentences, only key events and facts (names, items, decisions)
+1. summary — 2-3 sentences, only key events and facts (names, items, decisions)
 2. keys — up to 3 search keywords, only the most important ones (NPC names, locations, items, events)
 3. location — current location or null
 4. npcs — list of mentioned NPCs
