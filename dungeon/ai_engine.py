@@ -441,7 +441,7 @@ class AIEngineMixin:
                 ],
             )
 
-            response = self._api_post(payload, stream=True, timeout=120)
+            response = self._api_post(payload, stream=True, timeout=180)
             response.raise_for_status()
 
             # Заголовок Мастера рисуем только после успешного ответа: иначе
@@ -585,7 +585,7 @@ class AIEngineMixin:
                 max_tokens=summary_max_tokens,
                 stream=True,
             )
-            response = self._api_post(payload, stream=True, timeout=180)
+            response = self._api_post(payload, stream=True, timeout=240)
             response.raise_for_status()
             new_summary, cancelled = self._read_response(response, SUMMARY)
             if cancelled:
