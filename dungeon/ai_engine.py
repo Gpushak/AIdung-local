@@ -1,8 +1,7 @@
 import codecs
 import json
-import re
 from datetime import datetime
-from threading import Thread
+from threading import Event, Thread
 
 import requests
 
@@ -26,6 +25,110 @@ from .text_utils import (
     strip_reasoning_blocks,
 )
 from .tokens import count_tokens
+
+# Операции, которые можно прервать кнопкой остановки
+ACTION = "action"
+SUMMARY = "summary"
+MEMORY = "memory"
+CARDS = "cards"
+
+
+def _first_choice(data):
+    """Достаёт первый элемент choices из разобранного ответа API."""
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return {}
+    choice = choices[0]
+    return choice if isinstance(choice, dict) else {}
+
+
+def _raw_content(value):
+    """Текст из поля content без обрезки пробелов: приходит строкой или
+    списком частей (мультимодальный формат некоторых провайдеров)."""
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    parts = []
+    for part in value:
+        if isinstance(part, dict):
+            if part.get("type") in ("text", "output_text"):
+                parts.append(part.get("text") or "")
+        elif isinstance(part, str):
+            parts.append(part)
+    return "".join(parts)
+
+
+def _delta_content(data):
+    """Текст одной дельты потока (choices[0].delta.content)."""
+    choice = _first_choice(data)
+    delta = choice.get("delta")
+    if isinstance(delta, dict):
+        return _raw_content(delta.get("content"))
+    # Некоторые серверы присылают в дельте сразу объект message
+    return _raw_content(choice.get("message"))
+
+
+def _iter_response_deltas(response):
+    """Отдаёт текстовые дельты из ответа OpenAI-совместимого API.
+
+    Понимает и поток SSE, и обычный JSON: если сервер проигнорировал
+    stream, тело разбирается как единый объект и отдаётся одной дельтой.
+    Благодаря общему чтению любая генерация (ответ Мастера, суммаризация,
+    память, описание карточки) принимает одинаковый прерываемый цикл.
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")("ignore")
+    buffer = ""
+    body_lines = []
+    saw_sse = False
+
+    def parse_data_line(line):
+        try:
+            data = json.loads(line[5:].strip())
+        except ValueError:
+            return ""
+        return _delta_content(data)
+
+    for chunk in response.iter_content(chunk_size=None):
+        if not chunk:
+            continue
+        buffer += decoder.decode(chunk)
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith("data:"):
+                body_lines.append(line)
+                continue
+            saw_sse = True
+            if line[5:].strip() == "[DONE]":
+                return
+            content = parse_data_line(line)
+            if content:
+                yield content
+
+    # Последняя строка часто приходит без перевода строки
+    tail = buffer.strip()
+    if not tail:
+        return
+    if tail.startswith("data:"):
+        if tail[5:].strip() == "[DONE]":
+            return
+        content = parse_data_line(tail)
+        if content:
+            yield content
+    elif not saw_sse:
+        body_lines.append(tail)
+
+    if not saw_sse:
+        try:
+            data = json.loads("\n".join(body_lines))
+        except ValueError:
+            return
+        content = extract_message_text(_first_choice(data).get("message"))
+        if content:
+            yield content
 
 
 class AIEngineMixin:
@@ -68,11 +171,67 @@ class AIEngineMixin:
                 }
             }
             if stripped != payload:
+                response.close()
                 retry = requests.post(self.api_url, json=stripped, headers=self._api_headers(), **request_kwargs)
                 if retry.ok:
                     return retry
         response.raise_for_status()
         return response
+
+    # --- Прерывание генерации ------------------------------------------------
+
+    def _begin_operation(self, key):
+        """Регистрирует запущенную операцию с собственным флагом отмены.
+
+        Флаг создаётся заново на каждый запуск, иначе остановка одной
+        операции «залипла» бы на всех следующих.
+        """
+        self._cancel_events[key] = Event()
+        return self._cancel_events[key]
+
+    def _end_operation(self, key):
+        self._cancel_events.pop(key, None)
+
+    def is_cancelled(self, key):
+        event = self._cancel_events.get(key)
+        return event is not None and event.is_set()
+
+    def request_stop(self, key=None):
+        """Просит прервать текущие операции. Возвращает список прерванных."""
+        keys = (key,) if key else tuple(self._cancel_events)
+        stopped = []
+        for op in keys:
+            event = self._cancel_events.get(op)
+            if event is not None and not event.is_set():
+                event.set()
+                stopped.append(op)
+        return stopped
+
+    def _read_response(self, response, cancel_key, on_delta=None):
+        """Читает ответ API целиком, прерываясь по запросу остановки.
+
+        on_delta вызывается для каждой дельты и возвращает текст, который
+        нужно оставить в ответе (None — ничего не добавлять).
+        Возвращает пару (текст, признак прерывания).
+        """
+        parts = []
+        cancelled = False
+        try:
+            for delta in _iter_response_deltas(response):
+                if self.is_cancelled(cancel_key):
+                    cancelled = True
+                    break
+                if on_delta is None:
+                    parts.append(delta)
+                else:
+                    piece = on_delta(delta)
+                    if piece:
+                        parts.append(piece)
+        finally:
+            # Закрытие соединения освобождает сокет и срывает генерацию на
+            # стороне сервера, а не просто перестаёт читать поток.
+            response.close()
+        return strip_reasoning_blocks("".join(parts)).strip(), cancelled
 
     def start_memory_indexing(self, force=False):
         if self.memory_indexing:
@@ -80,6 +239,7 @@ class AIEngineMixin:
         if not self.memory_enabled and not force:
             return
         self.memory_indexing = True
+        self._begin_operation(MEMORY)
         self.refresh_busy_state()
         Thread(target=self._run_memory_indexing_impl, args=(force,), daemon=True).start()
 
@@ -117,11 +277,14 @@ class AIEngineMixin:
                 messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
                 temperature=0.2,
                 max_tokens=350,
-                stream=False,
+                stream=True,
             )
-            response = self._api_post(payload, timeout=120)
+            response = self._api_post(payload, stream=True, timeout=120)
             response.raise_for_status()
-            raw = extract_message_text(response.json()["choices"][0]["message"])
+            raw, cancelled = self._read_response(response, MEMORY)
+            if cancelled:
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.memory_stopped")))
+                return
             parsed = parse_memory_index_response(raw, fallback_text)
 
             entry = {
@@ -151,6 +314,7 @@ class AIEngineMixin:
             self.root.after(0, lambda msg=err_msg: self.add_system_message(self.tr("msg.memory_error", msg=msg)))
         finally:
             self.memory_indexing = False
+            self._end_operation(MEMORY)
             self.root.after(0, self.refresh_busy_state)
 
     def process_action(self, user_input="", direction_hint=None):
@@ -260,7 +424,9 @@ class AIEngineMixin:
                 ],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                stream=self.stream_mode,
+                # Поток запрашивается всегда: только так ответ можно прервать
+                # кнопкой остановки. stream_mode теперь управляет показом.
+                stream=True,
                 stop=[
                     f"\n{PLAYER_PREFIX}",
                     PLAYER_PREFIX,
@@ -275,51 +441,29 @@ class AIEngineMixin:
                 ],
             )
 
-            if self.stream_mode:
-                response = self._api_post(payload, stream=True, timeout=120)
-                response.raise_for_status()
+            response = self._api_post(payload, stream=True, timeout=120)
+            response.raise_for_status()
 
-                self.root.after(0, self.start_dm_stream)
-                raw_narration = ""
-                decoder = codecs.getincrementaldecoder("utf-8")("ignore")
-                buffer = ""
-                think_filter = StreamThinkFilter()
+            # Заголовок Мастера рисуем только после успешного ответа: иначе
+            # при ошибке подключения осталась бы висящая метка в логе.
+            self.root.after(0, self.start_dm_stream)
 
-                for chunk in response.iter_content(chunk_size=None):
-                    if not chunk:
-                        continue
-                    buffer += decoder.decode(chunk)
+            think_filter = StreamThinkFilter()
 
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        line = line.strip()
-                        if not line or not line.startswith("data: "):
-                            continue
-                        json_str = line[6:]
-                        if json_str == "[DONE]":
-                            break
+            def on_delta(delta):
+                content = clean_stream_chunk(think_filter.feed(delta))
+                if content and self.stream_mode:
+                    self.root.after(0, lambda c=content: self.append_to_dm_stream(c))
+                return content
 
-                        try:
-                            data = json.loads(json_str)
-                            delta = data["choices"][0].get("delta", {})
-                            content = delta.get("content") or ""
-                            if content:
-                                content = think_filter.feed(content)
-                                content = clean_stream_chunk(content)
-                                if content:
-                                    raw_narration += content
-                                    self.root.after(0, lambda c=content: self.append_to_dm_stream(c))
-                        except:
-                            pass
-                ai_text = strip_reasoning_blocks(raw_narration)
-            else:
-                response = self._api_post(payload, timeout=120)
-                response.raise_for_status()
-                ai_text = extract_message_text(response.json()["choices"][0]["message"])
-                self.root.after(0, self.start_dm_stream)
+            ai_text, cancelled = self._read_response(response, ACTION, on_delta)
 
             if not ai_text:
-                self.root.after(0, lambda: self.add_system_message(self.tr("msg.empty_model")))
+                # Пустой ответ: убираем заголовок Мастера, чтобы не оставлять
+                # висящий курсор в логе, и сообщаем причину.
+                self.root.after(0, self.abort_dm_stream)
+                key = "msg.action_stopped" if cancelled else "msg.empty_model"
+                self.root.after(0, lambda k=key: self.add_system_message(self.tr(k)))
                 return
 
             final_narration = clean_dm_response(ai_text)
@@ -328,6 +472,12 @@ class AIEngineMixin:
 
             self.history.append(f"{DM_PREFIX} {final_narration}")
             save_history(self.current_world_path, self.history)
+
+            if cancelled:
+                # Частичный ответ сохраняем в истории, но фоновые задачи не
+                # запускаем — пользователь явно попросил остановиться.
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.action_stopped")))
+                return
 
             completion_tokens = count_tokens(final_narration)
             total_tokens = prompt_tokens + completion_tokens
@@ -363,6 +513,7 @@ class AIEngineMixin:
 
     def _finish_player_turn(self):
         self.processing = False
+        self._end_operation(ACTION)
         if self._schedule_summary_after_turn:
             self._schedule_summary_after_turn = False
             self.start_global_summary()
@@ -375,6 +526,7 @@ class AIEngineMixin:
         if self.summary_indexing:
             return
         self.summary_indexing = True
+        self._begin_operation(SUMMARY)
         self.refresh_busy_state()
         Thread(target=self._generate_global_summary_impl, daemon=True).start()
 
@@ -431,11 +583,14 @@ class AIEngineMixin:
                 messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
                 temperature=0.3,
                 max_tokens=summary_max_tokens,
-                stream=False,
+                stream=True,
             )
-            response = self._api_post(payload, timeout=180)
+            response = self._api_post(payload, stream=True, timeout=180)
             response.raise_for_status()
-            new_summary = extract_message_text(response.json()["choices"][0]["message"])
+            new_summary, cancelled = self._read_response(response, SUMMARY)
+            if cancelled:
+                self.root.after(0, lambda: self.add_system_message(self.tr("msg.summary_stopped")))
+                return
             new_summary = new_summary.replace("```json", "").replace("```", "").strip()
 
             if new_summary:
@@ -452,4 +607,5 @@ class AIEngineMixin:
             )
         finally:
             self.summary_indexing = False
+            self._end_operation(SUMMARY)
             self.root.after(0, self.refresh_busy_state)

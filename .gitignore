@@ -15,3 +15,6 @@ App_finale/
 worlds/
 !worlds/settings.example.json
 *.json
+
+# Тесты
+tests

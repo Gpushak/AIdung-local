@@ -4,7 +4,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
 
-from .ai_engine import AIEngineMixin
+from .ai_engine import ACTION, AIEngineMixin
 from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WINDOW_SIZE
 from .dialogs import DialogMixin
 from .i18n import (
@@ -67,12 +67,14 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.story_cards = {"cards": []}
 
         self.processing = False
-        self.dm_stream_start_index = None
+        self.stream_start_index = None
         self.last_sent_prompt = None
         self.memory_indexing = False
         self.summary_indexing = False
         self._schedule_summary_after_turn = False
         self._schedule_memory_after_turn = False
+        # Флаги отмены активных операций генерации
+        self._cancel_events = {}
 
         self.create_widgets()
         self.initialize_world()
@@ -309,7 +311,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.send_button = ctk.CTkButton(
             input_frame,
             text=self.tr("btn.send"),
-            command=self.send_action,
+            command=self.on_send_or_stop,
             fg_color=COLORS["accent"],
             hover_color=COLORS["button_hover"],
             text_color="black",
@@ -318,6 +320,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             height=70,
         )
         self.send_button.pack(side=ctk.RIGHT)
+
+        # Esc останавливает генерацию — как в привычных чатах
+        self.input_field.bind("<Escape>", self.handle_escape)
+        self.text_area.bind("<Escape>", self.handle_escape)
 
     def handle_input_enter(self, event):
         if event.state & 0x1:
@@ -501,9 +507,32 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         save_history(self.current_world_path, self.history)
         self.refresh_chat_display()
 
-        self.processing = True
-        self.refresh_busy_state()
+        self.begin_action_turn()
         Thread(target=self.process_action, args=(last_player_input,), daemon=True).start()
+
+    def begin_action_turn(self):
+        """Отмечает ход как выполняющийся и выдаёт ему свежий флаг отмены."""
+        self.processing = True
+        self._begin_operation(ACTION)
+        self.refresh_busy_state()
+
+    def on_send_or_stop(self):
+        """Кнопка отправки: во время генерации она работает как «Стоп»."""
+        if self.is_busy():
+            self.request_stop_generation()
+        else:
+            self.send_action()
+
+    def request_stop_generation(self):
+        stopped = self.request_stop()
+        if stopped:
+            self.add_system_message(self.tr("msg.stop_requested"))
+            self.refresh_busy_state()
+
+    def handle_escape(self, event=None):
+        if self.is_busy():
+            self.request_stop_generation()
+            return "break"
 
     def send_action(self):
         if self.is_busy() or not self.current_world_path:
@@ -526,8 +555,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             self.update_summary_label()
         if self.memory_enabled:
             self.update_memory_label()
-        self.processing = True
-        self.refresh_busy_state()
+        self.begin_action_turn()
         Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
 
     def sync_introduction_to_history(self, intro_text):
@@ -555,12 +583,22 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area.configure(state="disabled")
         self.text_area.see(tk.END)
 
+    def abort_dm_stream(self):
+        """Убирает заголовок Мастера, если ответ не удалось получить."""
+        self.text_area.configure(state="normal")
+        if self.stream_start_index:
+            self.text_area.delete(self.stream_start_index, tk.END)
+            self.stream_start_index = None
+        self.text_area.configure(state="disabled")
+        self.text_area.see(tk.END)
+
     def finalize_dm_stream(self, final_text):
         self.text_area.configure(state="normal")
-        if hasattr(self, "stream_start_index"):
+        if self.stream_start_index:
             self.text_area.delete(self.stream_start_index, tk.END)
         self.text_area.insert(tk.END, f"{final_text}\n", "dm")
         self.text_area.configure(state="disabled")
+        self.stream_start_index = None
         self.text_area.see(tk.END)
 
     def is_busy(self):
@@ -568,29 +606,38 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def refresh_busy_state(self):
         if self.processing:
-            btn_text = self.tr("busy.thinking")
             status_text = self.tr("status.generating")
             lock_input = True
         elif self.summary_indexing and self.memory_indexing:
-            btn_text = self.tr("busy.background")
             status_text = self.tr("status.summary_memory")
             lock_input = False
         elif self.summary_indexing:
-            btn_text = self.tr("busy.summary")
             status_text = self.tr("status.summary")
             lock_input = False
         elif self.memory_indexing:
-            btn_text = self.tr("busy.memory")
             status_text = self.tr("status.memory")
             lock_input = False
         else:
-            self.send_button.configure(state="normal", text=self.tr("btn.send"))
+            self.send_button.configure(
+                state="normal",
+                text=self.tr("btn.send"),
+                fg_color=COLORS["accent"],
+                hover_color=COLORS["button_hover"],
+                text_color="black",
+            )
             self.input_field.configure(state="normal")
             self.status_label.configure(text=self.tr("ready"), text_color=COLORS["player_color"])
             self.input_field.focus()
             return
 
-        self.send_button.configure(state="disabled", text=btn_text)
+        # Во время генерации та же кнопка служит остановкой
+        self.send_button.configure(
+            state="normal",
+            text=self.tr("btn.stop"),
+            fg_color=COLORS["danger"],
+            hover_color=COLORS["danger_hover"],
+            text_color="white",
+        )
         if lock_input:
             self.input_field.configure(state="disabled")
         else:

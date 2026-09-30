@@ -16,6 +16,7 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 - **Memory Bank** — the AI indexes previous turns and retrieves relevant memories using keywords
 - **Automatic Summarization** — periodically compresses the chronicle into `summary.txt`
 - **Streaming Responses** — the Game Master's response appears as it is generated
+- **Interrupting Generation** — stop the response, summary, or memory indexing at any time
 - **Context Management** — token counting and history trimming to fit the model's context window
 
 ## Launch
@@ -57,6 +58,14 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 | **📝 Summarize** | Force an update of the summary |
 | **⏪ Undo Turn** | Delete the last message |
 | **❓ What's Next?** | Describe the events you want to happen next |
+
+## Stopping Generation
+
+While the AI is working, the **▶ Send** button turns into a red **⏹ Stop** button (or press **Esc**).
+It interrupts whatever is running at the moment:
+
+- **Reply generation** — the text received so far is kept and saved to the story, so you can edit it or use **⏪ Undo Turn**. Background summary and memory indexing are not started.
+- **Summarization / memory indexing** — the operation is cancelled, `summary.txt` and `memory_bank.json` are left unchanged, and the task will be retried after the next few turns.
 
 ## World Structure
 
@@ -134,7 +143,7 @@ Global parameters are stored in `worlds/settings.json`. You can change them eith
 | `summary_interval` | `10` | Automatically summarize every N turns |
 | `memory_interval` | `5` | Index memories every N turns |
 | `memory_top_k` | `5` | Number of memories/cards to include in the prompt |
-| `stream_mode` | `true` | Streaming generation |
+| `stream_mode` | `true` | Show the reply as it is generated |
 | `summary_enabled` | `true` | Enable/disable automatic summarization |
 | `memory_enabled` | `true` | Enable/disable the memory bank |
 

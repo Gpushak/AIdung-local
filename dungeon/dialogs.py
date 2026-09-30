@@ -5,6 +5,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
+from .ai_engine import CARDS
 from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WORLD_FILES
 from .i18n import DM_PREFIX, PLAYER_PREFIX, default_templates, dm_text, is_dm_msg, is_player_msg, player_text
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
@@ -517,7 +518,10 @@ class DialogMixin:
 
         gen_btn = desc_text.master.winfo_children()[2] if len(desc_text.master.winfo_children()) > 2 else None
         if gen_btn:
-            gen_btn.configure(state="disabled", text=self.tr("cards.generating"))
+            gen_btn.configure(state="normal", text=self.tr("btn.stop"), command=lambda: self.request_stop(CARDS))
+        # Флаг отмены создаём до старта потока, иначе клик по «Стоп» в первые
+        # миллисекунды попал бы в никуда.
+        self._begin_operation(CARDS)
 
         def run_generation():
             try:
@@ -525,21 +529,20 @@ class DialogMixin:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.2,
                     max_tokens=400,
-                    stream=False,
+                    stream=True,
                 )
-                response = self._api_post(payload, timeout=120)
+                response = self._api_post(payload, stream=True, timeout=120)
                 response.raise_for_status()
-                from .text_utils import extract_message_text
-                generated_desc = extract_message_text(response.json()["choices"][0]["message"])
-                generated_desc = generated_desc.strip()
+                generated_desc, cancelled = self._read_response(response, CARDS)
 
-                self.root.after(
-                    0,
-                    lambda: [
-                        desc_text.delete("1.0", tk.END),
-                        desc_text.insert("1.0", generated_desc),
-                    ],
-                )
+                if not cancelled:
+                    self.root.after(
+                        0,
+                        lambda: [
+                            desc_text.delete("1.0", tk.END),
+                            desc_text.insert("1.0", generated_desc),
+                        ],
+                    )
             except Exception as e:
                 err_msg = str(e)
                 self.root.after(
@@ -550,6 +553,7 @@ class DialogMixin:
                     ),
                 )
             finally:
+                self._end_operation(CARDS)
                 self.root.after(
                     0,
                     lambda: gen_btn.configure(state="normal", text=self.tr("cards.generate_desc")) if gen_btn else None,
