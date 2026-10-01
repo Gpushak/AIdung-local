@@ -26,6 +26,13 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 2. Run the `.exe`.
 3. Start your local model and local server.
 
+## Window Placement
+
+The main window opens centered on screen, and every dialog opens centered over it. If a window would
+not fit (for example a 900×1200 window on a 1080p screen), it is shrunk to the available work area
+instead of hanging off the top edge. A margin is reserved at the bottom for the Windows taskbar, so
+windows never end up underneath it.
+
 ## Quick Start
 
 1. On the first launch, create a world using the **➕** button or **🔄 Worlds → Create**.

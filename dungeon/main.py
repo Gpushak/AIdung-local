@@ -1,6 +1,8 @@
 import customtkinter as ctk
 
 from .app import DungeonApp
+from .config import WINDOW_SIZE
+from .windowing import place_window
 
 
 def main():
@@ -9,11 +11,11 @@ def main():
 
     root = ctk.CTk()
     DungeonApp(root)
-    root.update_idletasks()
 
-    x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
-    y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
-    root.geometry(f"+{x}+{y}")
+    # Размер и положение задаются после создания виджетов: до этого Tk
+    # отдаёт дефолтные 200x200, и по центру экрана встать не получится.
+    place_window(root, WINDOW_SIZE)
+    root.minsize(560, 420)
 
     root.mainloop()
 

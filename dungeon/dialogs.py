@@ -16,6 +16,7 @@ from .config import (
 )
 from .i18n import DM_PREFIX, PLAYER_PREFIX, default_templates, dm_text, is_dm_msg, is_player_msg, player_text
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
+from .windowing import place_window
 from .story_cards import (
     default_story_cards,
     format_triggers,
@@ -30,8 +31,8 @@ class DialogMixin:
     def manage_worlds(self):
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.manage_worlds"))
-        win.geometry("500x400")
         win.transient(self.root)
+        place_window(win, "500x400", self.root)
         win.grab_set()
 
         ctk.CTkLabel(win, text=self.tr("dialog.your_worlds"), font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
@@ -108,8 +109,8 @@ class DialogMixin:
     def create_world_dialog(self):
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.create_world"))
-        win.geometry("750x700")
         win.transient(self.root)
+        place_window(win, "750x700", self.root)
         win.grab_set()
 
         ctk.CTkLabel(win, text=self.tr("dialog.world_name")).pack(pady=(10, 0))
@@ -167,8 +168,8 @@ class DialogMixin:
             return
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.world_files"))
-        win.geometry("800x550")
         win.transient(self.root)
+        place_window(win, "800x550", self.root)
         win.grab_set()
 
         self.current_editing_file = None
@@ -575,8 +576,8 @@ class DialogMixin:
 
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.cards_title"))
-        win.geometry("850x600")
         win.transient(self.root)
+        place_window(win, "850x600", self.root)
         win.grab_set()
 
         cards_data = load_story_cards(self.current_world_path)
@@ -689,8 +690,8 @@ class DialogMixin:
 
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.next_title"))
-        win.geometry("520x280")
         win.transient(self.root)
+        place_window(win, "520x280", self.root)
         win.grab_set()
 
         ctk.CTkLabel(
@@ -738,8 +739,8 @@ class DialogMixin:
 
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.ai_settings"))
-        win.geometry("450x950")
         win.transient(self.root)
+        place_window(win, "450x950", self.root)
         win.grab_set()
 
         scroll = ctk.CTkScrollableFrame(win)
@@ -1071,8 +1072,8 @@ class DialogMixin:
         
         win = ctk.CTkToplevel(self.root)
         win.title(dialog_title)
-        win.geometry("600x550")
         win.transient(self.root)
+        place_window(win, "600x550", self.root)
         win.grab_set()
         
         # Title with position
@@ -1139,8 +1140,8 @@ class DialogMixin:
 
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.prompt_title"))
-        win.geometry("750x650")
         win.transient(self.root)
+        place_window(win, "750x650", self.root)
         win.grab_set()
 
         viewer = ctk.CTkTextbox(win, wrap=tk.WORD, font=ctk.CTkFont(family="Consolas", size=12))
@@ -1161,8 +1162,8 @@ class DialogMixin:
     def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd"):
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("btn.scene_prompt"))
-        win.geometry("750x650")
         win.transient(self.root)
+        place_window(win, "750x650", self.root)
         # Окно намеренно немодальное: промпт обычно уходит в стороннюю
         # программу (например A1111/ComfyUI), и закрывать окно не хочется.
 
@@ -1225,8 +1226,8 @@ class DialogMixin:
 
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.memory_title"))
-        win.geometry("750x650")
         win.transient(self.root)
+        place_window(win, "750x650", self.root)
         win.grab_set()
 
         ctk.CTkLabel(
