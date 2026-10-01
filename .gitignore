@@ -15,6 +15,9 @@ App_finale/
 worlds/
 !worlds/settings.example.json
 *.json
+# Резервные копии и временные файлы при атомарной записи
+*.bak
+*.tmp
 
 # Тесты
 tests

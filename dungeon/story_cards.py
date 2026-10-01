@@ -1,5 +1,8 @@
 import json
 import re
+from pathlib import Path
+
+from .storage import CorruptedDataError, atomic_write_json, read_json_with_backup
 
 STORY_CARDS_FILE = "story_cards.json"
 
@@ -12,22 +15,20 @@ def default_story_cards(lang="ru"):
 
 
 def load_story_cards(world_path):
-    path = world_path / STORY_CARDS_FILE
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and "cards" in data:
-                    return data
-        except Exception:
-            pass
+    path = Path(world_path) / STORY_CARDS_FILE
+    try:
+        data, _ = read_json_with_backup(path, None)
+    except CorruptedDataError:
+        # Карточки редактируются вручную и могут быть восстановлены из бэкапа
+        # или созданы заново, поэтому здесь молчаливый откат допустим.
+        return migrate_from_characters_txt(world_path)
+    if isinstance(data, dict) and "cards" in data:
+        return data
     return migrate_from_characters_txt(world_path)
 
 
 def save_story_cards(world_path, cards_data):
-    path = world_path / STORY_CARDS_FILE
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cards_data, f, ensure_ascii=False, indent=2)
+    atomic_write_json(Path(world_path) / STORY_CARDS_FILE, cards_data)
 
 
 def migrate_from_characters_txt(world_path):

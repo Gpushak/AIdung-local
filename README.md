@@ -69,7 +69,13 @@ It interrupts whatever is running at the moment:
 
 - **Reply generation** — the text received so far is kept and saved to the story, so you can edit it or use **⏪ Undo Turn**. Background summary and memory indexing are not started.
 - **Summarization / memory indexing** — the operation is cancelled, `summary.txt` and `memory_bank.json` are left unchanged, and the task will be retried after the next few turns.
-- **Scene prompt** — the generation is cancelled and no dialog opens.
+- **Scene Prompt** — the generation is cancelled and no dialog opens.
+
+The window with the generated prompt is **not modal**: you can copy it, switch to your image generator
+(Automatic1111, ComfyUI, Midjourney) and come back to the game without closing anything.
+
+A thin bar under the chat log always shows how much of the context window the last prompt used. It turns
+yellow near 70% and red past 90%, so you know when to run a summarization or start a new campaign.
 
 ## Scene Image Prompts
 
@@ -115,6 +121,17 @@ worlds/
     ├── memory_bank.json       # Memory bank
     └── history.json           # Current session history
 ```
+
+### Safe saving
+
+Every file is written atomically: the data goes to a temporary file, is flushed to disk, the previous
+version is copied to `<file>.bak`, and only then the temporary file is renamed into place. A crash or a
+full disk during saving therefore cannot leave a truncated file.
+
+If a file turns out to be unreadable at startup, the app tries `<file>.bak` first. When even the backup
+is broken, **the world is not loaded and an error is shown** — a corrupted `history.json` never silently
+becomes an empty campaign. Bank of memory and story cards degrade to defaults instead, because they can
+be regenerated.
 
 ## Story Cards
 

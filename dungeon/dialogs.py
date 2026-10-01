@@ -957,6 +957,7 @@ class DialogMixin:
             self.update_toggle_buttons()
             self.update_summary_label()
             self.update_memory_label()
+            self.update_context_indicator()
             model_info = self.tr("msg.model_part", model=self.model) if self.model else ""
             preset_info = self.tr("msg.preset_part", name=self.active_api_preset) if self.active_api_preset else ""
             self.add_system_message(
@@ -1162,7 +1163,8 @@ class DialogMixin:
         win.title(self.tr("btn.scene_prompt"))
         win.geometry("750x650")
         win.transient(self.root)
-        win.grab_set()
+        # Окно намеренно немодальное: промпт обычно уходит в стороннюю
+        # программу (например A1111/ComfyUI), и закрывать окно не хочется.
 
         ctk.CTkLabel(
             win, text=self.tr("dialog.image_style") + " " + self.tr(f"image_style.{style}"), text_color=COLORS["accent"]

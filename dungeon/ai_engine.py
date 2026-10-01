@@ -1,6 +1,7 @@
 import codecs
 import json
 import re
+import time
 from datetime import datetime
 from threading import Event, Thread
 
@@ -34,6 +35,11 @@ SUMMARY = "summary"
 MEMORY = "memory"
 CARDS = "cards"
 SCENE = "scene"
+
+# Размер порции при чтении потока. Меньше — плавнее отображение, но больше
+# вызовов чтения; None означает «копить всё до конца» (поток перестаёт быть
+# потоком). 64 байта — компромисс, дающий отзывчивый вывод без накладных.
+STREAM_CHUNK_SIZE = 64
 
 # Сколько последних ходов мастера попадает в промпт изображения сцены
 SCENE_TURNS = 5
@@ -98,7 +104,11 @@ def _iter_response_deltas(response):
             return ""
         return _delta_content(data)
 
-    for chunk in response.iter_content(chunk_size=None):
+    # chunk_size=None заставляет urllib3 копить данные в буфер до упора: текст
+    # приходил одним куском в самом конце и «потоковый» режим не работал.
+    # Небольшой размер чанка отдаёт байты по мере поступления, а DeltaBatcher
+    # потом собирает их в пачки, чтобы не дёргать интерфейс на каждый байт.
+    for chunk in response.iter_content(chunk_size=STREAM_CHUNK_SIZE):
         if not chunk:
             continue
         buffer += decoder.decode(chunk)
@@ -138,6 +148,37 @@ def _iter_response_deltas(response):
         content = extract_message_text(_first_choice(data).get("message"))
         if content:
             yield content
+
+
+class DeltaBatcher:
+    """Копит дельты и отдаёт их пачками.
+
+    Раньше на каждую дельту планировался отдельный вызов Tk, а вставка
+    заканчивалась see(END), из-за чего виджет пересчитывал раскладку на
+    каждом токене. Теперь текст уходит в интерфейс пачками примерно раз в
+    50 мс — на ответ в 800 токенов это единицы вставок вместо восьмисот.
+    """
+
+    FLUSH_INTERVAL = 0.05
+
+    def __init__(self, flush):
+        self._flush = flush
+        self._pending = []
+        self._last_flush = 0.0
+
+    def add(self, text):
+        self._pending.append(text)
+        now = time.monotonic()
+        if now - self._last_flush >= self.FLUSH_INTERVAL:
+            self.flush_now()
+
+    def flush_now(self):
+        if not self._pending:
+            return
+        chunk = "".join(self._pending)
+        self._pending.clear()
+        self._last_flush = time.monotonic()
+        self._flush(chunk)
 
 
 class AIEngineMixin:
@@ -549,14 +590,20 @@ class AIEngineMixin:
             self.root.after(0, self.start_dm_stream)
 
             think_filter = StreamThinkFilter()
+            # Дельты копятся и уходят в Tk пачками — см. DeltaBatcher
+            batcher = DeltaBatcher(
+                lambda chunk: self.root.after(0, lambda c=chunk: self.append_to_dm_stream(c))
+            )
 
             def on_delta(delta):
                 content = clean_stream_chunk(think_filter.feed(delta))
                 if content and self.stream_mode:
-                    self.root.after(0, lambda c=content: self.append_to_dm_stream(c))
+                    batcher.add(content)
                 return content
 
             ai_text, cancelled = self._read_response(response, ACTION, on_delta)
+            # Хвост, накопившийся за последние 50 мс, показываем сразу
+            batcher.flush_now()
 
             if not ai_text:
                 # Пустой ответ: убираем заголовок Мастера, чтобы не оставлять
@@ -581,6 +628,8 @@ class AIEngineMixin:
 
             completion_tokens = count_tokens(final_narration)
             total_tokens = prompt_tokens + completion_tokens
+
+            self.root.after(0, lambda p=prompt_tokens: self.update_context_indicator(p))
 
             self.root.after(
                 0,

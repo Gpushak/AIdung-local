@@ -29,7 +29,9 @@ from .i18n import (
 )
 from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
 from .story_cards import load_story_cards
+from .tokens import format_token_count
 from .storage import (
+    CorruptedDataError,
     ensure_introduction_in_history,
     format_introduction_history,
     get_world_list,
@@ -135,6 +137,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             self.refresh_busy_state()
         if hasattr(self, "refresh_world_combobox"):
             self.refresh_world_combobox()
+        if hasattr(self, "update_context_indicator"):
+            self.update_context_indicator()
 
     def save_global_settings(self):
         save_global_settings(
@@ -272,6 +276,18 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area._textbox.tag_config("intro", foreground=COLORS["accent"], font=("Arial", 14, "italic"))
         self.text_area._textbox.tag_config("system", foreground=COLORS["system_color"], font=("Arial", 12, "italic"))
         self.text_area.configure(state="disabled")
+
+        # Постоянный индикатор заполнения контекстного окна: токены уходят
+        # в лог и там теряются, а заполнение окна игроку важно видеть сразу.
+        context_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        context_frame.pack(fill=ctk.X, pady=(0, 8))
+        self.context_label = ctk.CTkLabel(context_frame, text="", text_color="gray")
+        self.context_label.pack(side=ctk.RIGHT, padx=(8, 0))
+        self.context_bar = ctk.CTkProgressBar(context_frame, height=8)
+        self.context_bar.pack(side=ctk.LEFT, fill=ctk.X, expand=True)
+        self.context_bar.set(0)
+        self.context_tokens = 0
+        self.update_context_indicator()
 
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         button_frame.pack(fill=ctk.X, pady=(0, 10))
@@ -454,6 +470,25 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         entries_count = len(self.memory_bank.get("entries", []))
         self.memory_label.configure(text=self.tr("memory.until", n=entries_count, remaining=remaining), text_color=color)
 
+    def update_context_indicator(self, used=None):
+        """Показывает, сколько контекста занято последним промптом."""
+        if used is not None:
+            self.context_tokens = max(0, int(used))
+        total = max(1, int(self.context_size))
+        ratio = min(1.0, self.context_tokens / total)
+        if ratio < 0.7:
+            color = COLORS["player_color"]
+        elif ratio < 0.9:
+            color = COLORS["accent"]
+        else:
+            color = COLORS["danger"]
+        self.context_bar.set(ratio)
+        self.context_bar.configure(progress_color=color)
+        self.context_label.configure(
+            text=self.tr("context.usage", used=format_token_count(self.context_tokens), total=format_token_count(total)),
+            text_color=color,
+        )
+
     def initialize_world(self):
         worlds = get_world_list()
         if not worlds:
@@ -469,11 +504,21 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if not world_path.exists():
             return
 
+        # Сначала читаем и проверяем данные, и только потом меняем состояние:
+        # при повреждённом файле текущий мир должен остаться нетронутым.
+        try:
+            _, loaded_history, restored = load_world_config(world_name)
+        except CorruptedDataError as e:
+            messagebox.showerror(
+                self.tr("dialog.corrupt_title"),
+                self.tr("dialog.corrupt_history", name=world_name, file=e.path.name, detail=e.detail),
+            )
+            return
+
         self.current_world_path = world_path
         self.world_name = world_name
         self.turns_since_summary = 0
         self.last_sent_prompt = None
-        _, loaded_history = load_world_config(world_name)
         self.history = ensure_introduction_in_history(world_path, loaded_history)
         if self.history != loaded_history:
             save_history(world_path, self.history)
@@ -483,9 +528,12 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.turns_since_memory = current_turns - self.memory_bank.get("last_indexed_turn", 0)
 
         self.refresh_chat_display()
+        if restored:
+            self.add_system_message(self.tr("msg.history_restored"))
         self.add_system_message(self.tr("msg.world_loaded", name=world_name))
         self.update_summary_label()
         self.update_memory_label()
+        self.update_context_indicator(0)
 
         self.refresh_world_combobox()
         self.world_var.set(self.world_name)

@@ -106,3 +106,11 @@ def count_tokens(text: str) -> int:
         return n
 
     return _heuristic_count(text)
+
+
+def format_token_count(n: int) -> str:
+    """Компактная запись для интерфейса: 843 -> «843», 16384 -> «16.4k»."""
+    n = int(n)
+    if n < 1000:
+        return str(n)
+    return f"{n / 1000:.1f}k".replace(".0k", "k")

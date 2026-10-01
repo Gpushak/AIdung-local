@@ -1,28 +1,28 @@
 import json
 import re
+from pathlib import Path
 
 from .i18n import DM_PREFIX, PLAYER_PREFIX, t
+from .storage import CorruptedDataError, atomic_write_json, read_json_with_backup
 
 MEMORY_BANK_FILE = "memory_bank.json"
 
 
 def load_memory_bank(world_path):
-    path = world_path / MEMORY_BANK_FILE
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and "entries" in data:
-                    return data
-        except:
-            pass
+    path = Path(world_path) / MEMORY_BANK_FILE
+    try:
+        data, _ = read_json_with_backup(path, None)
+    except CorruptedDataError:
+        # Банк памяти восстанавливается индексацией, поэтому деградация здесь
+        # допустима — в отличие от истории ходов.
+        return {"last_indexed_turn": 0, "entries": []}
+    if isinstance(data, dict) and "entries" in data:
+        return data
     return {"last_indexed_turn": 0, "entries": []}
 
 
 def save_memory_bank(world_path, bank):
-    path = world_path / MEMORY_BANK_FILE
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(bank, f, ensure_ascii=False, indent=2)
+    atomic_write_json(Path(world_path) / MEMORY_BANK_FILE, bank)
 
 
 def count_completed_turns(history):
