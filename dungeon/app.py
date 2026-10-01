@@ -5,7 +5,14 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .ai_engine import ACTION, AIEngineMixin
-from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WINDOW_SIZE
+from .config import (
+    BASE_DIR,
+    COLORS,
+    DEFAULT_IMAGE_STYLE,
+    INTRODUCTION_FILE,
+    STORY_CARDS_KEY,
+    WINDOW_SIZE,
+)
 from .dialogs import DialogMixin
 from .i18n import (
     DM_PREFIX,
@@ -61,6 +68,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.stream_mode = settings["stream_mode"]
         self.summary_enabled = settings.get("summary_enabled", True)
         self.memory_enabled = settings.get("memory_enabled", True)
+        self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
         self.turns_since_summary = 0
         self.turns_since_memory = 0
         self.memory_bank = {"last_indexed_turn": 0, "entries": []}
@@ -71,6 +79,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.last_sent_prompt = None
         self.memory_indexing = False
         self.summary_indexing = False
+        self.scene_prompt_running = False
         self._schedule_summary_after_turn = False
         self._schedule_memory_after_turn = False
         # Флаги отмены активных операций генерации
@@ -144,6 +153,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 "stream_mode": self.stream_mode,
                 "summary_enabled": self.summary_enabled,
                 "memory_enabled": self.memory_enabled,
+                "image_prompt_style": self.image_prompt_style,
                 "language": self.language,
             }
         )
@@ -282,6 +292,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         row2_commands = [
             ("btn.summary", self.force_summary),
             ("btn.memory", self.show_memory_bank),
+            ("btn.scene_prompt", self.generate_scene_prompt),
             ("btn.undo", self.undo_action),
         ]
 
@@ -602,7 +613,9 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area.see(tk.END)
 
     def is_busy(self):
-        return self.processing or self.memory_indexing or self.summary_indexing
+        return (
+            self.processing or self.memory_indexing or self.summary_indexing or self.scene_prompt_running
+        )
 
     def refresh_busy_state(self):
         if self.processing:
@@ -616,6 +629,9 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             lock_input = False
         elif self.memory_indexing:
             status_text = self.tr("status.memory")
+            lock_input = False
+        elif self.scene_prompt_running:
+            status_text = self.tr("status.scene_prompt")
             lock_input = False
         else:
             self.send_button.configure(

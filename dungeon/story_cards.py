@@ -94,9 +94,10 @@ def retrieve_relevant_cards(query, cards_data, top_k=5, min_score=1):
     scored.sort(key=lambda x: x[0], reverse=True)
     matched = [card for _, card in scored[:top_k]]
 
-    seen_ids = {card["id"] for card in matched}
+    # id может отсутствовать в ручном story_cards.json — не роняем из-за этого
+    seen_ids = {card.get("id") for card in matched}
     for card in always_include:
-        if card["id"] not in seen_ids:
+        if card.get("id") not in seen_ids:
             matched.append(card)
 
     return matched

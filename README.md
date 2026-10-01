@@ -17,6 +17,7 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 - **Automatic Summarization** — periodically compresses the chronicle into `summary.txt`
 - **Streaming Responses** — the Game Master's response appears as it is generated
 - **Interrupting Generation** — stop the response, summary, or memory indexing at any time
+- **Scene Image Prompts** — build an image prompt and negative prompt from the latest turns and story cards
 - **Context Management** — token counting and history trimming to fit the model's context window
 
 ## Launch
@@ -56,6 +57,8 @@ If you play in Russian, I recommend using Gemma 4 models. They are excellent at 
 | **📋 Prompt** | View the last prompt sent to the model |
 | **✏️ Edit** | Manually edit the Game Master's response |
 | **📝 Summarize** | Force an update of the summary |
+| **🧠 Memory** | View the memory bank, manually index memories |
+| **🎨 Scene Prompt** | Build an image prompt for the current scene |
 | **⏪ Undo Turn** | Delete the last message |
 | **❓ What's Next?** | Describe the events you want to happen next |
 
@@ -66,6 +69,35 @@ It interrupts whatever is running at the moment:
 
 - **Reply generation** — the text received so far is kept and saved to the story, so you can edit it or use **⏪ Undo Turn**. Background summary and memory indexing are not started.
 - **Summarization / memory indexing** — the operation is cancelled, `summary.txt` and `memory_bank.json` are left unchanged, and the task will be retried after the next few turns.
+- **Scene prompt** — the generation is cancelled and no dialog opens.
+
+## Scene Image Prompts
+
+**🎨 Scene Prompt** builds a ready-to-use image prompt for the current scene. The context passed to the model contains:
+
+- `plot_basics.txt` together with the AI instructions and author notes
+- the **last 5 completed turns** — each Game Master reply together with the player's turn before it
+- **relevant story cards** matched by keywords found in those turns, plus every card that has no triggers (always-active cards)
+
+The model returns a single JSON object with a `prompt` and a `negative_prompt` field. Both are shown in a
+window with separate copy buttons. Content restrictions are lifted: NSFW, violence and erotic elements are
+allowed when they fit the scene.
+
+If the model does not return valid JSON, the raw response is shown as the prompt.
+
+### Prompt Formats
+
+Different image models expect different markup, so the format is selected in **⚙️ AI Settings → Image prompt format**:
+
+| Format | What the prompt looks like |
+|--------|---------------------------|
+| **Stable Diffusion** (default) | comma-separated booru-style tags, weights as `(tag:1.2)`, quality tags appended |
+| **Midjourney** | one English paragraph plus `--ar 16:9 --style raw --v 7` |
+| **Flux** | 2–4 English sentences, no weights and no quality tags |
+| **Generic** | 2–4 English sentences, no weights |
+
+The setting is stored in `worlds/settings.json` as `image_prompt_style` (`sd`, `midjourney`, `flux`, `generic`).
+The chosen format is shown above the prompt in the result window.
 
 ## World Structure
 
@@ -143,6 +175,7 @@ Global parameters are stored in `worlds/settings.json`. You can change them eith
 | `summary_interval` | `10` | Automatically summarize every N turns |
 | `memory_interval` | `5` | Index memories every N turns |
 | `memory_top_k` | `5` | Number of memories/cards to include in the prompt |
+| `image_prompt_style` | `sd` | Image prompt format: `sd`, `midjourney`, `flux`, `generic` |
 | `stream_mode` | `true` | Show the reply as it is generated |
 | `summary_enabled` | `true` | Enable/disable automatic summarization |
 | `memory_enabled` | `true` | Enable/disable the memory bank |

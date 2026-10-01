@@ -1,7 +1,15 @@
 import json
 from pathlib import Path
 
-from .config import BASE_DIR, DEFAULT_API_URL, INTRODUCTION_FILE, SETTINGS_FILE, WORLD_FILES
+from .config import (
+    BASE_DIR,
+    DEFAULT_API_URL,
+    DEFAULT_IMAGE_STYLE,
+    IMAGE_PROMPT_STYLES,
+    INTRODUCTION_FILE,
+    SETTINGS_FILE,
+    WORLD_FILES,
+)
 from .i18n import INTRO_PREFIX
 
 
@@ -113,6 +121,7 @@ def load_global_settings():
         "stream_mode": True,
         "summary_enabled": True,
         "memory_enabled": True,
+        "image_prompt_style": DEFAULT_IMAGE_STYLE,
         "language": "ru",
     }
     if SETTINGS_FILE.exists():
@@ -126,6 +135,8 @@ def load_global_settings():
     active_preset = defaults.get("active_api_preset", "")
     if active_preset and not any(p["name"] == active_preset for p in defaults["api_presets"]):
         defaults["active_api_preset"] = ""
+    if defaults.get("image_prompt_style") not in IMAGE_PROMPT_STYLES:
+        defaults["image_prompt_style"] = DEFAULT_IMAGE_STYLE
     return defaults
 
 

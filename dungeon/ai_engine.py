@@ -1,5 +1,6 @@
 import codecs
 import json
+import re
 from datetime import datetime
 from threading import Event, Thread
 
@@ -10,6 +11,7 @@ from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
 from .memory import (
     count_completed_turns,
     format_memory_block,
+    get_recent_turn_messages,
     get_turn_messages,
     parse_memory_index_response,
     retrieve_relevant_memories,
@@ -31,6 +33,10 @@ ACTION = "action"
 SUMMARY = "summary"
 MEMORY = "memory"
 CARDS = "cards"
+SCENE = "scene"
+
+# Сколько последних ходов мастера попадает в промпт изображения сцены
+SCENE_TURNS = 5
 
 
 def _first_choice(data):
@@ -66,7 +72,10 @@ def _delta_content(data):
     if isinstance(delta, dict):
         return _raw_content(delta.get("content"))
     # Некоторые серверы присылают в дельте сразу объект message
-    return _raw_content(choice.get("message"))
+    message = choice.get("message")
+    if isinstance(message, dict):
+        return _raw_content(message.get("content"))
+    return _raw_content(message)
 
 
 def _iter_response_deltas(response):
@@ -316,6 +325,97 @@ class AIEngineMixin:
             self.memory_indexing = False
             self._end_operation(MEMORY)
             self.root.after(0, self.refresh_busy_state)
+
+    # --- Промпт изображения сцены ---------------------------------------------
+
+    def start_scene_prompt(self):
+        """Собирает контекст сцены и просит модель вернуть промпт + антипромпт."""
+        if self.is_busy() or not self.current_world_path:
+            return
+        recent = get_recent_turn_messages(self.history, SCENE_TURNS)
+        if not any(msg.startswith(DM_PREFIX) for msg in recent):
+            self.add_system_message(self.tr("scene.needs_history"))
+            return
+
+        self.scene_prompt_running = True
+        self._begin_operation(SCENE)
+        self.refresh_busy_state()
+        Thread(target=self._run_scene_prompt, daemon=True).start()
+
+    def generate_scene_prompt(self):
+        self.root.after(0, self.start_scene_prompt)
+
+    def _scene_context(self):
+        """Текст для промпта: plot_basics, последние ходы, релевантные карточки."""
+        world_path = self.current_world_path
+        plot_basics = ""
+        for fname in ("plot_basics.txt", "ai_instructions.txt", "author_notes.txt"):
+            path = world_path / fname
+            if path.exists():
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    plot_basics += f"=== {fname} ===\n{content}\n"
+
+        recent = get_recent_turn_messages(self.history, SCENE_TURNS)
+        history_fragment = "\n".join(localize_history(self.language, recent))
+
+        query = "\n".join(recent)
+        cards = retrieve_relevant_cards(query, self.story_cards, top_k=self.memory_top_k)
+        cards_block = format_story_cards_block(cards, self.language)
+        return plot_basics, history_fragment, cards_block
+
+    def _run_scene_prompt(self):
+        try:
+            plot_basics, history_fragment, cards_block = self._scene_context()
+            style = self.image_prompt_style
+            prompt = t(
+                self.language,
+                "prompt.scene_image",
+                plot_basics=plot_basics or t(self.language, "prompt.none"),
+                history_fragment=history_fragment or t(self.language, "prompt.none"),
+                cards_block=cards_block or t(self.language, "prompt.none"),
+                style_rules=t(self.language, f"prompt.scene_style.{style}"),
+            )
+            payload = self._api_payload(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=700,
+                stream=True,
+            )
+            response = self._api_post(payload, stream=True, timeout=120)
+            response.raise_for_status()
+            raw, cancelled = self._read_response(response, SCENE)
+            if cancelled:
+                return
+
+            scene_prompt, negative = self._parse_scene_response(raw)
+            self.root.after(0, lambda: self.show_scene_prompt(scene_prompt, negative, style))
+
+        except requests.exceptions.ConnectionError:
+            self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_server")))
+        except Exception as e:
+            err_msg = str(e)
+            self.root.after(0, lambda msg=err_msg: self.add_system_message(self.tr("msg.scene_prompt_fail", msg=msg)))
+        finally:
+            self.scene_prompt_running = False
+            self._end_operation(SCENE)
+            self.root.after(0, self.refresh_busy_state)
+
+    def _parse_scene_response(self, raw):
+        """Достаёт промпт и антипромпт из JSON-ответа модели."""
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group())
+                scene_prompt = str(data.get("prompt", "")).strip()
+                negative = str(data.get("negative_prompt", "")).strip()
+                if scene_prompt:
+                    return scene_prompt, negative
+            except ValueError:
+                pass
+        # Модель не выдала JSON — показываем ответ как есть
+        return cleaned, ""
 
     def process_action(self, user_input="", direction_hint=None):
         try:

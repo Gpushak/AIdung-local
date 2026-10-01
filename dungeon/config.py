@@ -5,6 +5,11 @@ from .i18n import default_templates
 
 DEFAULT_API_URL = "http://localhost:1234/v1/chat/completions"
 
+# Форматы промптов для генерации изображений. По умолчанию — Stable Diffusion,
+# так как это самая распространённая локальная модель.
+IMAGE_PROMPT_STYLES = ("sd", "midjourney", "flux", "generic")
+DEFAULT_IMAGE_STYLE = "sd"
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys.executable).parent / "worlds"

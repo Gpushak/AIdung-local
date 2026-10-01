@@ -6,7 +6,14 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 
 from .ai_engine import CARDS
-from .config import BASE_DIR, COLORS, INTRODUCTION_FILE, STORY_CARDS_KEY, WORLD_FILES
+from .config import (
+    BASE_DIR,
+    COLORS,
+    IMAGE_PROMPT_STYLES,
+    INTRODUCTION_FILE,
+    STORY_CARDS_KEY,
+    WORLD_FILES,
+)
 from .i18n import DM_PREFIX, PLAYER_PREFIX, default_templates, dm_text, is_dm_msg, is_player_msg, player_text
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .story_cards import (
@@ -902,6 +909,14 @@ class DialogMixin:
         memory_top_k_var = ctk.StringVar(value=str(self.memory_top_k))
         ctk.CTkOptionMenu(scroll, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=10, pady=5)
 
+        ctk.CTkLabel(scroll, text=self.tr("dialog.image_style")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        image_style_var = ctk.StringVar(value=self.tr(f"image_style.{self.image_prompt_style}"))
+        ctk.CTkOptionMenu(
+            scroll,
+            variable=image_style_var,
+            values=[self.tr(f"image_style.{s}") for s in IMAGE_PROMPT_STYLES],
+        ).pack(anchor=tk.W, padx=10, pady=5)
+
         def apply_settings():
             api_url = api_url_entry.get().strip()
             if api_url:
@@ -932,6 +947,12 @@ class DialogMixin:
                 self.memory_top_k = int(memory_top_k_var.get())
             except:
                 pass
+            # Обратный перевод подписи выбранного формата в ключ стиля
+            selected_style = image_style_var.get()
+            for style in IMAGE_PROMPT_STYLES:
+                if self.tr(f"image_style.{style}") == selected_style:
+                    self.image_prompt_style = style
+                    break
             self.save_global_settings()
             self.update_toggle_buttons()
             self.update_summary_label()
@@ -1135,6 +1156,60 @@ class DialogMixin:
         btn_frame.pack(fill=ctk.X, padx=15, pady=(0, 15))
         ctk.CTkButton(btn_frame, text=self.tr("btn.copy"), command=copy_to_clipboard).pack(side=ctk.LEFT)
         ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+
+    def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd"):
+        win = ctk.CTkToplevel(self.root)
+        win.title(self.tr("btn.scene_prompt"))
+        win.geometry("750x650")
+        win.transient(self.root)
+        win.grab_set()
+
+        ctk.CTkLabel(
+            win, text=self.tr("dialog.image_style") + " " + self.tr(f"image_style.{style}"), text_color=COLORS["accent"]
+        ).pack(anchor=tk.W, padx=15, pady=(12, 0))
+
+        def labeled_box(parent, label, text, row):
+            ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=13, weight="bold")).grid(
+                row=row, column=0, sticky=tk.W, padx=15, pady=(12, 4)
+            )
+            box = ctk.CTkTextbox(parent, height=200, wrap=tk.WORD, font=ctk.CTkFont(family="Consolas", size=12))
+            box.insert("1.0", text or self.tr("prompt.none"))
+            box.configure(state="disabled")
+            return box
+
+        grid = ctk.CTkFrame(win, fg_color="transparent")
+        grid.pack(fill=ctk.BOTH, expand=True)
+        grid.grid_columnconfigure(0, weight=1)
+
+        prompt_box = labeled_box(grid, self.tr("scene.prompt_label"), scene_prompt, 0)
+        prompt_box.grid(row=1, column=0, sticky=tk.NSEW, padx=15)
+
+        neg_box = labeled_box(grid, self.tr("scene.negative_label"), negative_prompt, 2)
+        neg_box.grid(row=3, column=0, sticky=tk.NSEW, padx=15)
+        grid.grid_rowconfigure(1, weight=1)
+        grid.grid_rowconfigure(3, weight=1)
+
+        btn_frame = ctk.CTkFrame(win, fg_color="transparent")
+        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        def copy(text, done_key):
+            if not text:
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.add_system_message(self.tr(done_key))
+
+        ctk.CTkButton(
+            btn_frame, text=self.tr("scene.copy_prompt"), command=lambda: copy(scene_prompt, "scene.copied_prompt")
+        ).pack(side=ctk.LEFT, padx=(0, 6))
+        ctk.CTkButton(
+            btn_frame,
+            text=self.tr("scene.copy_negative"),
+            command=lambda: copy(negative_prompt, "scene.copied_negative"),
+        ).pack(side=ctk.LEFT)
+        ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
+
+        self.add_system_message(self.tr("msg.scene_prompt_done"))
 
     def show_memory_bank(self):
         if not self.current_world_path:

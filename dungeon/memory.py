@@ -56,6 +56,20 @@ def get_turn_messages(history, turn_start, turn_end):
     return messages
 
 
+def get_recent_turn_messages(history, last_n):
+    """Последние n завершённых ходов (ход игрока + ответ мастера), по порядку."""
+    turns = []
+    i = 0
+    while i < len(history):
+        if history[i].startswith(PLAYER_PREFIX):
+            if i + 1 < len(history) and history[i + 1].startswith(DM_PREFIX):
+                turns.append([history[i], history[i + 1]])
+                i += 2
+                continue
+        i += 1
+    return [msg for turn in turns[-last_n:] for msg in turn]
+
+
 def retrieve_relevant_memories(query, bank, top_k=5, min_score=1):
     query_lower = query.lower()
     query_words = set(re.findall(r"[\w\u0400-\u04ff]+", query_lower))

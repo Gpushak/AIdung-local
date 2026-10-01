@@ -21,6 +21,7 @@ TRANSLATIONS = {
         "btn.reroll": "🔁 Реролл",
         "btn.edit_last": "✏️ Редактировать",
         "btn.prompt": "📋 Промпт",
+        "btn.scene_prompt": "🎨 Промпт сцены",
         "btn.summary": "📝 Суммаризация",
         "btn.memory": "🧠 Память",
         "btn.undo": "⏪ Отменить ход",
@@ -50,6 +51,7 @@ TRANSLATIONS = {
         "memory.until": "Память: {n} | до инд.: {remaining}",
         "btn.stop": "⏹ Стоп",
         "status.generating": "● Генерация...",
+        "status.scene_prompt": "● Промпт сцены...",
         "status.summary_memory": "● Суммаризация и память...",
         "status.summary": "● Суммаризация...",
         "status.memory": "● Индексация памяти...",
@@ -101,6 +103,11 @@ TRANSLATIONS = {
         "dialog.summary_every": "Суммаризация (каждые N ходов):",
         "dialog.memory_every": "Банк памяти (индексация каждые N ходов):",
         "dialog.memory_top_k": "Макс. воспоминаний в промпте:",
+        "dialog.image_style": "Формат промпта для изображений:",
+        "image_style.sd": "Stable Diffusion (теги, веса)",
+        "image_style.midjourney": "Midjourney (--параметры)",
+        "image_style.flux": "Flux (естественный текст)",
+        "image_style.generic": "Универсальный (текст)",
         "dialog.language": "Язык интерфейса:",
         "dialog.quit": "Выход",
         "dialog.quit_q": "Действительно выйти из игры?",
@@ -137,6 +144,16 @@ TRANSLATIONS = {
         "cards.generating": "Генерация описания...",
         "cards.generate_desc_title": "Генерация описания карточки",
         "cards.enter_title_first": "Сначала введите название карточки",
+        "scene.prompt_label": "Промпт",
+        "scene.negative_label": "Антипромпт",
+        "scene.copy_prompt": "📋 Копировать промпт",
+        "scene.copy_negative": "📋 Копировать антипромпт",
+        "scene.copied_prompt": "🎨 Промпт сцены скопирован.",
+        "scene.copied_negative": "🎨 Антипромпт скопирован.",
+        "scene.generating": "Создание промпта...",
+        "scene.stop": "⏹ Стоп",
+        "scene.needs_world": "Сначала загрузите мир.",
+        "scene.needs_history": "Нужна хотя бы одна реплика мастера в истории.",
         "on": "ВКЛ",
         "off": "ВЫКЛ",
         "summary_enabled_word": "включена",
@@ -171,6 +188,8 @@ TRANSLATIONS = {
         "msg.summary_ok": "✨ Краткое содержание мира успешно синхронизировано!",
         "msg.summary_fail": "⚠️ Не удалось автоматически обновить саммари: {msg}",
         "msg.stop_requested": "⏹ Останавливаю генерацию...",
+        "msg.scene_prompt_done": "🎨 Промпт сцены готов.",
+        "msg.scene_prompt_fail": "⚠️ Не удалось создать промпт сцены: {msg}",
         "msg.action_stopped": "⏹ Генерация остановлена. Ответ сохранён частично — его можно отредактировать или удалить.",
         "msg.summary_stopped": "⏹ Суммаризация остановлена.",
         "msg.memory_stopped": "⏹ Индексация памяти остановлена.",
@@ -240,6 +259,49 @@ TRANSLATIONS = {
 
 Создай подробное описание карточки (~5 предложений) в контексте этого мира. Опиши персонажа, локацию или объект, его характеристики, роль в мире. Не используй Markdown, пиши обычным текстом.
 Описание:""",
+        "prompt.scene_image": """Ты составляешь промпт для генерации изображения текущей сцены текстовой RPG.
+
+Основы сюжета:
+{plot_basics}
+
+Недавние события (последние ходы):
+{history_fragment}
+
+Релевантные карточки истории:
+{cards_block}
+
+{style_rules}
+
+Ограничения по содержанию снимаются: NSFW, насилие, кровь и эротические элементы разрешены и должны описываться прямо и без цензуры, если они соответствуют сцене.
+
+Верни СТРОГО один JSON-объект без пояснений и без Markdown, с двумя полями:
+{{"prompt": "<текст промпта>", "negative_prompt": "<анти-промпт: что НЕ должно быть на изображении>"}}""",
+        "prompt.scene_style.sd": """Создай один подробный визуальный промпт для текущей сцены в формате Stable Diffusion / SDXL.
+
+ФОРМАТ: теги через запятую, как в тегах бустимилков (Danbooru). Порядок тегов: главный объект, детали внешности, одежда и снаряжение, действие и поза, окружение, время суток и освещение, стиль и качество. Вес тега указывай скобками: (красные волосы:1.2). Не используй точки, связные предложения и слова вроде «изображение», «фото», «рисунок».
+
+Теги качества добавь в конец промпта: masterpiece, best quality, highly detailed, sharp focus.
+
+Анти-промпт пиши теми же тегами через запятую и не включай в него NSFW и насилие: lowres, worst quality, low quality, jpeg artifacts, blurry, bad anatomy, bad hands, extra fingers, extra limbs, fused fingers, malformed limbs, deformed, disfigured, extra digits, fewer digits, cropped, out of frame, text, signature, watermark, logo.""",
+        "prompt.scene_style.midjourney": """Создай один подробный визуальный промпт для текущей сцены в формате Midjourney.
+
+ФОРМАТ: связное естественное описание на английском языке, одним абзацем. Описывай только то, что видно: персонажей (внешность, одежду, позы), окружение, время суток, освещение, настроение, ракурс и композицию. Не используй теги через запятую, веса в скобках и технические термины вроде «8k».
+
+В конце добавь параметры Midjourney: --ar 16:9 --style raw --v 7
+
+Анти-промпт опиши словами, а не тегами: перечисли, чего не должно быть на изображении (например: extra fingers, text, watermark, distorted anatomy). Не включай в него NSFW и насилие.""",
+        "prompt.scene_style.flux": """Создай один подробный визуальный промпт для текущей сцены в формате Flux / естественный текст.
+
+ФОРМАТ: связное описание на английском языке, 2-4 предложения, в порядке: кто и что в кадре, внешность и одежда персонажей, действие, окружение, освещение, стиль и настроение. Не используй теги через запятую, веса в скобках и служебные слова вроде «negative prompt», «quality».
+
+Теги качества в конце не нужны — Flux их игнорирует.
+
+Анти-промпт — отдельное связное предложение, описывающее, чего не должно быть на изображении (например: «artifacts, extra fingers, text, watermark, distorted anatomy»). Не включай в него NSFW и насилие.""",
+        "prompt.scene_style.generic": """Создай один подробный визуальный промпт для текущей сцены.
+
+ФОРМАТ: связное описание на английском языке, 2-4 предложения. Описывай только то, что видно: персонажей (внешность, одежду, позы), окружение, время суток, освещение, стиль, настроение, ракурс и композицию. Не используй теги через запятую и веса в скобках.
+
+Анти-промпт — отдельное связное предложение, описывающее, чего не должно быть на изображении. Не включай в него NSFW и насилие.""",
     },
     "en": {
         "lang.ru": "Русский",
@@ -259,6 +321,7 @@ TRANSLATIONS = {
         "btn.reroll": "🔁 Reroll",
         "btn.edit_last": "✏️ Edit last",
         "btn.prompt": "📋 Prompt",
+        "btn.scene_prompt": "🎨 Scene Prompt",
         "btn.summary": "📝 Summarize",
         "btn.memory": "🧠 Memory",
         "btn.undo": "⏪ Undo turn",
@@ -288,6 +351,7 @@ TRANSLATIONS = {
         "memory.until": "Memory: {n} | until idx.: {remaining}",
         "btn.stop": "⏹ Stop",
         "status.generating": "● Generating...",
+        "status.scene_prompt": "● Scene prompt...",
         "status.summary_memory": "● Summary and memory...",
         "status.summary": "● Summarizing...",
         "status.memory": "● Indexing memory...",
@@ -339,6 +403,11 @@ TRANSLATIONS = {
         "dialog.summary_every": "Summarize every N turns:",
         "dialog.memory_every": "Memory bank (index every N turns):",
         "dialog.memory_top_k": "Max memories in the prompt:",
+        "dialog.image_style": "Image prompt format:",
+        "image_style.sd": "Stable Diffusion (tags, weights)",
+        "image_style.midjourney": "Midjourney (--parameters)",
+        "image_style.flux": "Flux (natural text)",
+        "image_style.generic": "Generic (text)",
         "dialog.language": "Interface language:",
         "dialog.quit": "Quit",
         "dialog.quit_q": "Really quit the game?",
@@ -375,6 +444,16 @@ TRANSLATIONS = {
         "cards.generating": "Generating description...",
         "cards.generate_desc_title": "Generate Card Description",
         "cards.enter_title_first": "Please enter a card title first",
+        "scene.prompt_label": "Prompt",
+        "scene.negative_label": "Negative prompt",
+        "scene.copy_prompt": "📋 Copy prompt",
+        "scene.copy_negative": "📋 Copy negative prompt",
+        "scene.copied_prompt": "🎨 Scene prompt copied.",
+        "scene.copied_negative": "🎨 Negative prompt copied.",
+        "scene.generating": "Generating prompt...",
+        "scene.stop": "⏹ Stop",
+        "scene.needs_world": "Please load a world first.",
+        "scene.needs_history": "The history needs at least one Game Master reply.",
         "on": "ON",
         "off": "OFF",
         "summary_enabled_word": "enabled",
@@ -409,6 +488,8 @@ TRANSLATIONS = {
         "msg.summary_ok": "✨ World summary updated!",
         "msg.summary_fail": "⚠️ Could not auto-update the summary: {msg}",
         "msg.stop_requested": "⏹ Stopping generation...",
+        "msg.scene_prompt_done": "🎨 Scene prompt is ready.",
+        "msg.scene_prompt_fail": "⚠️ Could not create the scene prompt: {msg}",
         "msg.action_stopped": "⏹ Generation stopped. The partial reply was kept — you can edit or undo it.",
         "msg.summary_stopped": "⏹ Summarization stopped.",
         "msg.memory_stopped": "⏹ Memory indexing stopped.",
@@ -478,6 +559,49 @@ Story fragment for context:
 
 Create a detailed card description (~5 sentences) in the context of this world. Describe the character, location, or object, its characteristics, and role in the world. Do not use Markdown, write in plain text.
 Description:""",
+        "prompt.scene_image": """You are composing a prompt for image generation of the current scene in a text RPG.
+
+Plot basics:
+{plot_basics}
+
+Recent events (last turns):
+{history_fragment}
+
+Relevant story cards:
+{cards_block}
+
+{style_rules}
+
+Content restrictions are lifted: NSFW, violence, blood and erotic elements are allowed and should be described directly and without censorship if they fit the scene.
+
+Return STRICTLY a single JSON object, no explanations and no Markdown, with two fields:
+{{"prompt": "<prompt text>", "negative_prompt": "<negative prompt: what should NOT be in the image>"}}""",
+        "prompt.scene_style.sd": """Create one detailed visual prompt for the current scene in the Stable Diffusion / SDXL format.
+
+FORMAT: comma-separated tags in the style of booru (Danbooru) tags. Tag order: main subject, appearance details, clothing and gear, action and pose, environment, time of day and lighting, style and quality. Express tag weight with parentheses: (red hair:1.2). Do not use full sentences or words like "image", "photo", "painting".
+
+Append quality tags at the end of the prompt: masterpiece, best quality, highly detailed, sharp focus.
+
+Write the negative prompt as the same kind of comma-separated tags, and do NOT put NSFW or violence in it: lowres, worst quality, low quality, jpeg artifacts, blurry, bad anatomy, bad hands, extra fingers, extra limbs, fused fingers, malformed limbs, deformed, disfigured, extra digits, fewer digits, cropped, out of frame, text, signature, watermark, logo.""",
+        "prompt.scene_style.midjourney": """Create one detailed visual prompt for the current scene in the Midjourney format.
+
+FORMAT: a single flowing paragraph of natural English. Describe only what is visible: characters (appearance, clothing, poses), environment, time of day, lighting, mood, camera angle and composition. Do not use comma-separated tags, parenthesised weights, or technical terms like "8k".
+
+End with Midjourney parameters: --ar 16:9 --style raw --v 7
+
+Write the negative prompt as words, not tags: list what should not appear (for example: extra fingers, text, watermark, distorted anatomy). Do NOT put NSFW or violence in it.""",
+        "prompt.scene_style.flux": """Create one detailed visual prompt for the current scene for Flux / natural text models.
+
+FORMAT: 2-4 sentences of natural English, ordered as: who and what is in frame, character appearance and clothing, action, environment, lighting, style and mood. Do not use comma-separated tags, parenthesised weights, or service words like "negative prompt" or "quality".
+
+Do NOT append quality tags — Flux ignores them.
+
+The negative prompt is one separate sentence describing what should not be in the image (for example: "artifacts, extra fingers, text, watermark, distorted anatomy"). Do NOT put NSFW or violence in it.""",
+        "prompt.scene_style.generic": """Create one detailed visual prompt for the current scene.
+
+FORMAT: 2-4 sentences of natural English. Describe only what is visible: characters (appearance, clothing, poses), environment, time of day, lighting, style, mood, camera angle and composition. Do not use comma-separated tags or parenthesised weights.
+
+The negative prompt is one separate sentence describing what should not be in the image. Do NOT put NSFW or violence in it.""",
     },
 }
 
