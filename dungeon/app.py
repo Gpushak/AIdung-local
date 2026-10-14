@@ -493,10 +493,10 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def update_context_indicator(self):
         """Показывает заполнение контекста новой историей с последней суммаризации."""
-        used, budget = self.unsummarized_fill()
+        used, budget, ratio = self.context_fill_state()
         self.context_tokens = used
         self.context_budget = max(1, int(budget))
-        self.context_ratio = used / self.context_budget
+        self.context_ratio = ratio
         color = self._context_fill_color(self.context_ratio)
         self.context_bar.set(min(1.0, self.context_ratio))
         self.context_bar.configure(progress_color=color)
@@ -591,19 +591,30 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.update_memory_label()
         self.add_system_message(self.tr("msg.undone"))
 
+    def rewind_last_reply(self):
+        """Убирает последний ответ мастера и не считает новый ответ уже сжатым.
+
+        Если граница стояла на конце истории, удалённый ответ выпадает из
+        покрытого префикса. Иначе следующий ответ занял бы его место и
+        больше никогда не попал бы в хронику.
+        """
+        if self.history and is_dm_msg(self.history[-1]):
+            self.history.pop()
+        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
+        if self.current_world_path:
+            save_summary_cursor(self.current_world_path, self.covered_count)
+        if self.history and is_player_msg(self.history[-1]):
+            return player_text(self.history[-1])
+        return ""
+
     def regenerate_action(self):
         if self.is_busy() or not self.history or not self.current_world_path:
             return
 
-        if is_dm_msg(self.history[-1]):
-            self.history.pop()
-
-        last_player_input = ""
-        if self.history and is_player_msg(self.history[-1]):
-            last_player_input = player_text(self.history[-1])
-
+        last_player_input = self.rewind_last_reply()
         save_history(self.current_world_path, self.history)
         self.refresh_chat_display()
+        self.update_context_indicator()
 
         self.begin_action_turn()
         Thread(target=self.process_action, args=(last_player_input,), daemon=True).start()
@@ -650,6 +661,17 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             self.update_memory_label()
         self.begin_action_turn()
         Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
+
+    def note_history_revised(self, index):
+        """Правка уже сжатой реплики снимает отметку с неё и со всего, что после.
+
+        Саммари описывает старый текст, а граница — это префикс. Откатить её
+        к изменённому сообщению, иначе новый текст так и останется «покрытым».
+        """
+        if index < self.covered_count:
+            self.covered_count = max(0, int(index))
+            if self.current_world_path:
+                save_summary_cursor(self.current_world_path, self.covered_count)
 
     def sync_introduction_to_history(self, intro_text):
         before = list(self.history)

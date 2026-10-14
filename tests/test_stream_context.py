@@ -18,10 +18,12 @@ from dungeon.storage import (  # noqa: E402
     save_summary_cursor,
 )
 from dungeon.tokens import (  # noqa: E402
+    HISTORY_BUDGET_FLOOR,
     count_tokens,
     format_token_count,
     history_window_budget,
     summary_due,
+    take_unsummarized_prefix,
     unsummarized_token_count,
 )
 from tkhelpers import close_tk_window  # noqa: E402
@@ -94,7 +96,35 @@ def test_history_budget_matches_turn_window():
     # Ход дополнительно вычитает текст игрока
     assert history_window_budget(16384, 300, 1000, 40) == 16384 - 300 - 1000 - 40 - 64
     assert history_window_budget(500, 300, 1000, 0) == 300
+    raw = history_window_budget(500, 300, 1000, 0, apply_floor=False)
+    assert raw < HISTORY_BUDGET_FLOOR
+    assert raw == 500 - 300 - 1000 - 64
     print("OK  бюджет истории совпадает со сборкой хода")
+
+
+def test_summary_takes_oldest_uncovered_prefix():
+    history = ["раз", "два", "три", "четыре"]
+    costs = [count_tokens(msg) + 1 for msg in history]
+    whole = sum(costs)
+    chunk, nxt, skipped = take_unsummarized_prefix(history, 0, whole)
+    assert chunk == history and nxt == 4 and skipped == 0
+
+    first_two = costs[0] + costs[1]
+    chunk, nxt, skipped = take_unsummarized_prefix(history, 0, first_two)
+    assert chunk == ["раз", "два"] and nxt == 2 and skipped == 0
+
+    chunk, nxt, skipped = take_unsummarized_prefix(history, 2, costs[2])
+    assert chunk == ["три"] and nxt == 3 and skipped == 0
+
+    huge = "слово " * 400
+    mixed = [huge, "коротко", "ещё"]
+    budget = count_tokens("коротко") + 1
+    chunk, nxt, skipped = take_unsummarized_prefix(mixed, 0, budget)
+    assert skipped == 1 and chunk == ["коротко"] and nxt == 2
+
+    chunk, nxt, skipped = take_unsummarized_prefix(history, 1, 0)
+    assert chunk == [] and nxt == 1 and skipped == 0
+    print("OK  суммаризация берёт старый непокрытый кусок и не отмечает хвост")
 
 
 def test_unsummarized_tokens_start_at_cursor():
@@ -225,7 +255,7 @@ def test_summary_cursor_advances_on_success_and_undo_clamps():
         app.covered_count = 0
         # Пока саммари не записано, граница не двигается
         assert app.covered_count == 0
-        app._remember_summarized_history()
+        app._remember_summarized_history(2)
         assert app.covered_count == 2
         assert read_summary_cursor(world) == 2
 
@@ -248,6 +278,42 @@ def test_summary_cursor_advances_on_success_and_undo_clamps():
         app.covered_count = 0
         app.sync_introduction_to_history("ещё раз")
         assert app.covered_count == 0
+
+        app.history = ["Игрок: а", "Мастер: б", "Игрок: в", "Мастер: г"]
+        app.covered_count = 0
+        app._remember_summarized_history(2)
+        assert app.covered_count == 2
+        assert read_summary_cursor(world) == 2
+
+        app.history = ["Игрок: а", "Мастер: б"]
+        app.covered_count = 2
+        save_summary_cursor(world, 2)
+        player = app.rewind_last_reply()
+        assert player == "а"
+        assert app.history == ["Игрок: а"]
+        assert app.covered_count == 1
+        assert read_summary_cursor(world) == 1
+
+        app.history = ["Игрок: старое", "Мастер: два", "Игрок: три"]
+        app.covered_count = 3
+        app.note_history_revised(0)
+        assert app.covered_count == 0
+        assert read_summary_cursor(world) == 0
+        app.covered_count = 3
+        app.note_history_revised(1)
+        assert app.covered_count == 1
+
+        app.context_size = 100
+        available, _, _ = app._summary_history_budget()
+        assert available < 800
+
+        app.context_size = 400
+        app.max_tokens = 300
+        app.history = ["Игрок: раз"]
+        app.covered_count = 0
+        app.update_context_indicator()
+        assert app.context_budget < HISTORY_BUDGET_FLOOR or app.context_ratio == 1.0
+        assert app.context_ratio > app.context_tokens / HISTORY_BUDGET_FLOOR
 
     close_tk_window(app.root)
     print("OK  граница саммари сдвигается после успеха, отмены хода и правки вступления")

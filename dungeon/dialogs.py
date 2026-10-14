@@ -437,6 +437,7 @@ class DialogMixin:
                 save_story_cards(self.current_world_path, cards_data)
                 self.story_cards = cards_data
                 self.add_system_message(self.tr("msg.cards_saved"))
+            self.update_context_indicator()
 
         card_listbox.bind("<<ListboxSelect>>", on_card_select)
         search_var.trace_add("write", lambda *_: refresh_list(state["selected_index"]))
@@ -695,6 +696,7 @@ class DialogMixin:
         self.update_unsaved_indicator()
         if self.current_editing_file == INTRODUCTION_FILE:
             self.sync_introduction_to_history(content.strip())
+        self.update_context_indicator()
         self.add_system_message(self.tr("msg.file_saved", name=self.current_editing_file))
 
     def prompt_next_turn(self):
@@ -1266,7 +1268,11 @@ class DialogMixin:
             new_text = editor.get("1.0", tk.END).strip()
             if not new_text:
                 return
-            self.history[current_index] = f"{current_prefix} {new_text}"
+            new_line = f"{current_prefix} {new_text}"
+            changed = self.history[current_index] != new_line
+            self.history[current_index] = new_line
+            if changed and current_index < self.covered_count:
+                self.note_history_revised(current_index)
             save_history(self.current_world_path, self.history)
             self.refresh_chat_display()
             self.update_context_indicator()

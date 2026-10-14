@@ -123,12 +123,16 @@ HISTORY_SAFETY_BUFFER = 64
 HISTORY_BUDGET_FLOOR = 300
 
 
-def history_window_budget(context_size, max_tokens, static_tokens, extra_tokens=0) -> int:
+def history_window_budget(context_size, max_tokens, static_tokens, extra_tokens=0, apply_floor=True) -> int:
     """Сколько токенов истории ещё влезает в контекстное окно.
 
     static_tokens — файлы мира, саммари, память, карточки и заголовок истории.
     extra_tokens — текст текущего хода игрока: его вычитает сборка промпта,
     а полоса заполнения смотрит бюджет без него.
+    apply_floor=True не даёт сборке хода опуститься ниже 300 токенов истории.
+    Полоса и автосуммаризация считают честный остаток, даже если он нулевой:
+    иначе короткая новая история выглядит переполненной и суммаризация
+    запускается на каждом ходе.
     """
     budget = (
         int(context_size)
@@ -137,9 +141,54 @@ def history_window_budget(context_size, max_tokens, static_tokens, extra_tokens=
         - int(extra_tokens)
         - HISTORY_SAFETY_BUFFER
     )
-    if budget < HISTORY_BUDGET_FLOOR:
+    if apply_floor and budget < HISTORY_BUDGET_FLOOR:
         return HISTORY_BUDGET_FLOOR
     return budget
+
+
+def take_unsummarized_prefix(history, covered_count, token_budget):
+    """Самый старый ещё не сжатый кусок, который влезает в бюджет суммаризации.
+
+    Возвращает (messages, next_covered, skipped).
+    Сообщение длиннее всего бюджета пропускается: в модель оно не влезет,
+    а граница сдвигается за него, чтобы следующий ход не застревал на нём.
+    При бюджете меньше 1 прогресса нет — иначе вся история была бы отмечена
+    сжатой, не попав в промпт.
+    """
+    try:
+        covered = int(covered_count)
+    except (TypeError, ValueError):
+        covered = 0
+    covered = max(0, min(covered, len(history)))
+    try:
+        budget = int(token_budget)
+    except (TypeError, ValueError):
+        budget = 0
+    if budget < 1:
+        return [], covered, 0
+
+    index = covered
+    skipped = 0
+    while index < len(history):
+        msg_tokens = count_tokens(history[index]) + 1
+        if msg_tokens <= budget:
+            break
+        index += 1
+        skipped += 1
+
+    chunk = []
+    used = 0
+    while index < len(history):
+        msg_tokens = count_tokens(history[index]) + 1
+        if used + msg_tokens > budget:
+            break
+        chunk.append(history[index])
+        used += msg_tokens
+        index += 1
+
+    if not chunk and not skipped:
+        return [], covered, 0
+    return chunk, index, skipped
 
 
 def unsummarized_token_count(history, covered_count) -> int:

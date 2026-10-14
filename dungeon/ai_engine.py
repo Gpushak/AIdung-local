@@ -19,7 +19,7 @@ from .memory import (
     save_memory_bank,
 )
 from .story_cards import format_story_cards_block, retrieve_relevant_cards
-from .storage import save_history, save_summary_cursor
+from .storage import atomic_write_text, save_history, save_summary_cursor
 from .text_utils import (
     StreamThinkFilter,
     clean_dm_response,
@@ -27,7 +27,13 @@ from .text_utils import (
     extract_message_text,
     strip_reasoning_blocks,
 )
-from .tokens import count_tokens, history_window_budget, summary_due, unsummarized_token_count
+from .tokens import (
+    count_tokens,
+    history_window_budget,
+    summary_due,
+    take_unsummarized_prefix,
+    unsummarized_token_count,
+)
 
 # Операции, которые можно прервать кнопкой остановки
 ACTION = "action"
@@ -505,27 +511,59 @@ class AIEngineMixin:
             context += cards_block
         return context
 
-    def static_history_budget(self, extra_tokens=0, retrieval_query=None):
+    def static_history_budget(self, extra_tokens=0, retrieval_query=None, apply_floor=True):
         """Бюджет токенов истории: окно минус ответ, статика и запас."""
         if retrieval_query is None:
             retrieval_query = self._retrieval_query("")
         context = self._static_context_text(retrieval_query)
         system_base_text = f"{context}\n{t(self.language, 'prompt.history_header')}\n"
         static_tokens = count_tokens(system_base_text)
-        return history_window_budget(self.context_size, self.max_tokens, static_tokens, extra_tokens)
+        return history_window_budget(
+            self.context_size, self.max_tokens, static_tokens, extra_tokens, apply_floor=apply_floor
+        )
 
     def unsummarized_fill(self):
-        """Токены новой истории с последней суммаризации и бюджет, в который она должна влезть."""
+        """Токены новой истории с последней суммаризации и честный остаток окна.
+
+        Пол в 300 токенов здесь не применяется: он нужен только сборке хода,
+        чтобы модель не осталась совсем без хроники.
+        """
         if not self.current_world_path:
-            budget = history_window_budget(self.context_size, self.max_tokens, 0, 0)
+            budget = history_window_budget(self.context_size, self.max_tokens, 0, 0, apply_floor=False)
             return 0, budget
         used = unsummarized_token_count(self.history, self.covered_count)
-        budget = self.static_history_budget(0)
+        budget = self.static_history_budget(0, apply_floor=False)
         return used, budget
 
-    def _remember_summarized_history(self):
-        """Отмечает всю текущую историю как вошедшую в summary.txt."""
-        self.covered_count = len(self.history)
+    def context_fill_state(self):
+        """used, показанный бюджет и доля. При нулевом остатке доля равна 1, если хвост непустой."""
+        used, budget = self.unsummarized_fill()
+        if budget < 1:
+            return used, max(used, 1), (1.0 if used else 0.0)
+        return used, budget, used / budget
+
+    def _summary_history_budget(self):
+        """Сколько токенов истории реально влезает в промпт суммаризации, без искусственного пола."""
+        summary_path = self.current_world_path / "summary.txt"
+        old_summary = (
+            summary_path.read_text(encoding="utf-8").strip()
+            if summary_path.exists()
+            else t(self.language, "prompt.none")
+        )
+        prompt_template_base = t(
+            self.language,
+            "prompt.summary",
+            old_summary=old_summary,
+            history="",
+        )
+        summary_max_tokens = 1000
+        safety_buffer = 400
+        available = self.context_size - summary_max_tokens - count_tokens(prompt_template_base) - safety_buffer
+        return available, old_summary, summary_max_tokens
+
+    def _remember_summarized_history(self, next_covered):
+        """Отмечает покрытым только тот префикс истории, который реально сжали."""
+        self.covered_count = max(0, min(int(next_covered), len(self.history)))
         if self.current_world_path:
             save_summary_cursor(self.current_world_path, self.covered_count)
         self.root.after(0, self.update_context_indicator)
@@ -551,8 +589,8 @@ class AIEngineMixin:
             system_base_text = f"{context}\n{t(self.language, 'prompt.history_header')}\n"
             static_tokens = count_tokens(system_base_text)
             user_tokens = count_tokens(user_content)
-            # Бюджет совпадает с полосой под логом, но ход ещё вычитает
-            # текст игрока: он тоже занимает окно и не должен вытеснять историю.
+            # Пол в 300 токенов здесь намеренный: ход не должен остаться без истории.
+            # Полоса считает тот же остаток без пола и без текста игрока.
             available_history_tokens = history_window_budget(
                 self.context_size, self.max_tokens, static_tokens, user_tokens
             )
@@ -668,11 +706,16 @@ class AIEngineMixin:
                 ),
             )
 
-            used_since_summary, history_budget = self.unsummarized_fill()
-            fill_ratio = used_since_summary / max(1, history_budget)
-            self._schedule_summary_after_turn = summary_due(
-                fill_ratio, self.summary_fill_percent, self.summary_enabled
-            )
+            _used, _budget, fill_ratio = self.context_fill_state()
+            self._schedule_summary_after_turn = False
+            if summary_due(fill_ratio, self.summary_fill_percent, self.summary_enabled):
+                available, _, _ = self._summary_history_budget()
+                _chunk, next_covered, _skipped = take_unsummarized_prefix(
+                    self.history, self.covered_count, available
+                )
+                # Не ставим задачу, если сжать нечего: иначе каждый ход
+                # снова вызывал бы модель и не сдвигал границу.
+                self._schedule_summary_after_turn = next_covered > self.covered_count
             if self._schedule_summary_after_turn:
                 self.root.after(0, lambda: self.add_system_message(self.tr("msg.reviewing")))
 
@@ -694,6 +737,8 @@ class AIEngineMixin:
     def _finish_player_turn(self):
         self.processing = False
         self._end_operation(ACTION)
+        # В том числе после остановки: обрыв ответа уже в истории, полоса должна его учесть.
+        self.update_context_indicator()
         if self._schedule_summary_after_turn:
             self._schedule_summary_after_turn = False
             self.start_global_summary()
@@ -719,38 +764,24 @@ class AIEngineMixin:
                 return
 
             summary_path = self.current_world_path / "summary.txt"
-            old_summary = (
-                summary_path.read_text(encoding="utf-8").strip() if summary_path.exists() else t(self.language, "prompt.none")
+            available_summary_history, old_summary, summary_max_tokens = self._summary_history_budget()
+            # Берём самый старый ещё не сжатый кусок. Если отметить покрытой
+            # всю историю, сообщения, которые в этот промпт не влезли, больше
+            # никогда не попадут в хронику.
+            chunk, next_covered, skipped = take_unsummarized_prefix(
+                self.history, self.covered_count, available_summary_history
             )
-            prompt_template_base = t(
-                self.language,
-                "prompt.summary",
-                old_summary=old_summary,
-                history="",
-            )
-
-            summary_max_tokens = 1000
-            base_prompt_tokens = count_tokens(prompt_template_base)
-            safety_buffer = 400
-
-            available_summary_history = (
-                self.context_size - summary_max_tokens - base_prompt_tokens - safety_buffer
-            )
-            if available_summary_history < 800:
-                available_summary_history = 800
-
-            short_history = []
-            current_history_tokens = 0
-
-            for msg in reversed(self.history):
-                msg_tokens = count_tokens(msg) + 1
-                if current_history_tokens + msg_tokens <= available_summary_history:
-                    short_history.insert(0, msg)
-                    current_history_tokens += msg_tokens
+            if not chunk:
+                if next_covered > self.covered_count:
+                    self._remember_summarized_history(next_covered)
+                    self.root.after(
+                        0, lambda n=skipped: self.add_system_message(self.tr("msg.summary_skipped", n=n))
+                    )
                 else:
-                    break
+                    self.root.after(0, lambda: self.add_system_message(self.tr("msg.summary_no_room")))
+                return
 
-            history_text = "\n".join(localize_history(self.language, short_history))
+            history_text = "\n".join(localize_history(self.language, chunk))
 
             prompt = t(
                 self.language,
@@ -774,10 +805,14 @@ class AIEngineMixin:
             new_summary = new_summary.replace("```json", "").replace("```", "").strip()
 
             if new_summary:
-                summary_path.write_text(new_summary, encoding="utf-8")
-                # Граница сдвигается только здесь: отмена и ошибка оставляют
-                # полосу полной, и следующая попытка повторится на следующем ходе.
-                self._remember_summarized_history()
+                atomic_write_text(summary_path, new_summary)
+                # Граница сдвигается только после целой записи и только до конца
+                # куска, который ушёл в промпт. Отмена и ошибка полосу не сбрасывают.
+                self._remember_summarized_history(next_covered)
+                if skipped:
+                    self.root.after(
+                        0, lambda n=skipped: self.add_system_message(self.tr("msg.summary_skipped", n=n))
+                    )
                 self.root.after(
                     0, lambda: self.add_system_message(self.tr("msg.summary_ok"))
                 )
