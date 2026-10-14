@@ -178,7 +178,7 @@ def load_global_settings():
         "temperature": 0.7,
         "max_tokens": 300,
         "context_size": 16384,
-        "summary_interval": 10,
+        "summary_fill_percent": 80,
         "memory_interval": 5,
         "memory_top_k": 5,
         "stream_mode": True,
@@ -202,7 +202,78 @@ def load_global_settings():
         defaults["active_api_preset"] = ""
     if defaults.get("image_prompt_style") not in IMAGE_PROMPT_STYLES:
         defaults["image_prompt_style"] = DEFAULT_IMAGE_STYLE
+    defaults["summary_fill_percent"] = clamp_summary_fill_percent(defaults.get("summary_fill_percent", 80))
     return defaults
+
+
+def clamp_summary_fill_percent(value):
+    """Порог автосуммаризации: 50–95%, чтобы до выпадения истории оставался запас."""
+    try:
+        percent = int(value)
+    except (TypeError, ValueError):
+        percent = 90
+    return min(95, max(50, percent))
+
+
+SUMMARY_STATE_FILE = "summary_state.json"
+
+
+def clamp_summary_cursor(covered_count, history_len):
+    """Не даёт границе саммари выйти за пределы текущего списка сообщений."""
+    history_len = max(0, int(history_len))
+    try:
+        covered = int(covered_count)
+    except (TypeError, ValueError):
+        covered = 0
+    if covered < 0:
+        covered = 0
+    if covered > history_len:
+        covered = history_len
+    return covered
+
+
+def read_summary_cursor(world_path):
+    """Сколько сообщений истории уже вошло в саммари, или None, если метки нет.
+
+    Повреждённый файл трактуется как отсутствующий: границу можно восстановить
+    по summary.txt, а молчаливый ноль спрятал бы уже сжатую хронику.
+    """
+    path = Path(world_path) / SUMMARY_STATE_FILE
+    try:
+        data, _ = read_json_with_backup(path, None)
+    except CorruptedDataError:
+        return None
+    if not isinstance(data, dict) or "covered_count" not in data:
+        return None
+    try:
+        return int(data["covered_count"])
+    except (TypeError, ValueError):
+        return None
+
+
+def default_summary_cursor(world_path, history_len):
+    """Миграция мира, в котором ещё нет summary_state.json.
+
+    Непустое саммари значит, что прошлая схема уже сжимала хронику, и шкала
+    стартует с нуля. Пустое — вся история ещё не покрыта.
+    """
+    summary_path = Path(world_path) / "summary.txt"
+    summary = ""
+    if summary_path.exists():
+        try:
+            summary = summary_path.read_text(encoding="utf-8")
+        except OSError:
+            summary = ""
+    if summary.strip():
+        return clamp_summary_cursor(history_len, history_len)
+    return 0
+
+
+def save_summary_cursor(world_path, covered_count):
+    atomic_write_json(
+        Path(world_path) / SUMMARY_STATE_FILE,
+        {"covered_count": max(0, int(covered_count))},
+    )
 
 
 def save_global_settings(settings):

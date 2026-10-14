@@ -79,7 +79,7 @@ class DialogMixin:
                     self.current_world_path = None
                     self.world_name = None
                     self.history = []
-                    self.turns_since_summary = 0
+                    self.covered_count = 0
                     self.turns_since_memory = 0
                     self.memory_bank = {"last_indexed_turn": 0, "entries": []}
 
@@ -89,8 +89,8 @@ class DialogMixin:
                         self.load_world(next_world)
                         return
 
-                    self.update_summary_label()
                     self.update_memory_label()
+                    self.update_context_indicator()
                     self.refresh_chat_display()
 
         ctk.CTkButton(btn_frame, text=self.tr("btn.load"), command=switch_to_world).pack(side=ctk.LEFT, padx=5)
@@ -896,9 +896,16 @@ class DialogMixin:
         ctx_slider.set(self.context_size)
         ctx_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.summary_every")).pack(anchor=tk.W, padx=10)
-        interval_var = ctk.StringVar(value=str(self.summary_interval))
-        ctk.CTkOptionMenu(scroll, variable=interval_var, values=["5", "10", "15", "20"]).pack(anchor=tk.W, padx=10, pady=5)
+        ctk.CTkLabel(scroll, text=self.tr("dialog.summary_fill")).pack(anchor=tk.W, padx=10)
+        fill_val_lbl = ctk.CTkLabel(scroll, text=f"{self.summary_fill_percent}%", text_color=COLORS["accent"])
+        fill_val_lbl.pack(anchor=tk.E, padx=10)
+
+        def update_fill_lbl(val):
+            fill_val_lbl.configure(text=f"{int(round(float(val)))}%")
+
+        fill_slider = ctk.CTkSlider(scroll, from_=50, to=95, number_of_steps=45, command=update_fill_lbl)
+        fill_slider.set(self.summary_fill_percent)
+        fill_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
         ctk.CTkLabel(scroll, text=self.tr("dialog.memory_every")).pack(anchor=tk.W, padx=10, pady=(10, 0))
         memory_interval_var = ctk.StringVar(value=str(self.memory_interval))
@@ -932,12 +939,9 @@ class DialogMixin:
             self.memory_enabled = memory_enabled_var.get()
             self.temperature = temp_slider.get()
             self.context_size = int(ctx_slider.get())
+            self.summary_fill_percent = int(round(fill_slider.get()))
             try:
                 self.max_tokens = int(tokens_entry.get())
-            except:
-                pass
-            try:
-                self.summary_interval = int(interval_var.get())
             except:
                 pass
             try:
@@ -1110,6 +1114,7 @@ class DialogMixin:
             self.history[current_index] = f"{current_prefix} {new_text}"
             save_history(self.current_world_path, self.history)
             self.refresh_chat_display()
+            self.update_context_indicator()
             win.destroy()
             self.add_system_message(success_msg)
         
@@ -1123,8 +1128,6 @@ class DialogMixin:
     def force_summary(self):
         if self.is_busy() or not self.current_world_path:
             return
-        self.turns_since_summary = 0
-        self.update_summary_label()
         self.add_system_message(self.tr("msg.force_summary"))
         self.generate_global_summary()
 

@@ -8,7 +8,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dungeon.ai_engine import DeltaBatcher  # noqa: E402
-from dungeon.tokens import format_token_count  # noqa: E402
+from dungeon.config import COLORS  # noqa: E402
+from dungeon.i18n import INTRO_PREFIX  # noqa: E402
+from dungeon.storage import (  # noqa: E402
+    clamp_summary_cursor,
+    clamp_summary_fill_percent,
+    default_summary_cursor,
+    read_summary_cursor,
+    save_summary_cursor,
+)
+from dungeon.tokens import (  # noqa: E402
+    count_tokens,
+    format_token_count,
+    history_window_budget,
+    summary_due,
+    unsummarized_token_count,
+)
 from tkhelpers import close_tk_window  # noqa: E402
 
 
@@ -73,7 +88,63 @@ def test_format_token_count():
     print("OK  числа токенов форматируются компактно")
 
 
-def test_context_indicator_updates():
+def test_history_budget_matches_turn_window():
+    """Бюджет истории — окно минус ответ, статику и запас, но не ниже пола."""
+    assert history_window_budget(16384, 300, 1000, 0) == 16384 - 300 - 1000 - 64
+    # Ход дополнительно вычитает текст игрока
+    assert history_window_budget(16384, 300, 1000, 40) == 16384 - 300 - 1000 - 40 - 64
+    assert history_window_budget(500, 300, 1000, 0) == 300
+    print("OK  бюджет истории совпадает со сборкой хода")
+
+
+def test_unsummarized_tokens_start_at_cursor():
+    history = ["аа", "ббб", "в"]
+    whole = sum(count_tokens(msg) + 1 for msg in history)
+    tail = count_tokens("в") + 1
+    assert unsummarized_token_count(history, 0) == whole
+    assert unsummarized_token_count(history, 2) == tail
+    assert unsummarized_token_count(history, 99) == 0
+    assert unsummarized_token_count(history, -5) == whole
+    print("OK  в заполнение входит только история после границы саммари")
+
+
+def test_summary_due_uses_fill_percent():
+    assert summary_due(0.8, 80, True)
+    assert summary_due(0.79, 80, True) is False
+    assert summary_due(1.5, 80, False) is False
+    assert summary_due(0.5, 50, True)
+    assert clamp_summary_fill_percent(10) == 50
+    assert clamp_summary_fill_percent(100) == 95
+    assert clamp_summary_fill_percent("80") == 80
+    assert clamp_summary_fill_percent("нет") == 80
+    print("OK  автосуммаризация стартует на пороге заполнения")
+
+
+def test_summary_cursor_migration():
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        world = Path(tmp)
+        assert read_summary_cursor(world) is None
+        assert default_summary_cursor(world, 4) == 0
+        (world / "summary.txt").write_text("уже сжатая хроника", encoding="utf-8")
+        assert default_summary_cursor(world, 4) == 4
+        (world / "summary.txt").write_text("  \n", encoding="utf-8")
+        assert default_summary_cursor(world, 4) == 0
+        save_summary_cursor(world, 2)
+        assert read_summary_cursor(world) == 2
+        assert clamp_summary_cursor(9, 4) == 4
+        assert clamp_summary_cursor(-3, 4) == 0
+        (world / "summary_state.json").write_text("{", encoding="utf-8")
+        assert read_summary_cursor(world) is None
+    print("OK  старый мир получает границу по summary.txt, битый файл не затирает её нулём молча")
+
+
+def test_context_indicator_shows_fill_since_summary():
+    import tempfile
+    from pathlib import Path
+
     import customtkinter as ctk
 
     from dungeon.app import DungeonApp
@@ -82,23 +153,104 @@ def test_context_indicator_updates():
     root = ctk.CTk()
     root.withdraw()
     app = DungeonApp(root)
-    app.context_size = 1000
+    app.language = "ru"
+    app.context_size = 8000
+    app.max_tokens = 300
+    app.summary_fill_percent = 80
+    app.memory_enabled = False
+    app.story_cards = {"cards": []}
+    app.memory_bank = {"last_indexed_turn": 0, "entries": []}
 
-    app.update_context_indicator(500)
-    assert app.context_tokens == 500
-    assert "500" in app.context_label.cget("text")
+    with tempfile.TemporaryDirectory() as tmp:
+        world = Path(tmp)
+        app.current_world_path = world
+        app.history = ["Игрок: раз", "Мастер: два", "Игрок: три"]
+        app.covered_count = 1
+        app.update_context_indicator()
 
-    # Переполнение не должно ломать полоску
-    app.update_context_indicator(5000)
-    assert app.context_tokens == 5000
-    assert app.context_label.cget("text")  # текст есть
+        used = unsummarized_token_count(app.history, 1)
+        assert app.context_tokens == used
+        assert used > 0
+        assert used < unsummarized_token_count(app.history, 0)
+        label = app.context_label.cget("text")
+        assert format_token_count(used) in label
+        assert "С суммаризации" in label
+        assert "1" in app.summary_label.cget("text") or "%" in app.summary_label.cget("text")
 
-    # Сброс
-    app.update_context_indicator(0)
-    assert app.context_tokens == 0
+        app.covered_count = len(app.history)
+        app.update_context_indicator()
+        assert app.context_tokens == 0
+        assert app.context_ratio == 0
+        assert "0%" in app.summary_label.cget("text")
+
+        # Переполнение не должно ломать полоску и красит её в красный
+        app.covered_count = 0
+        app.context_size = 2000
+        app.summary_fill_percent = 80
+        app.history = ["слово " * 8000]
+        app.update_context_indicator()
+        assert app.context_tokens > app.context_budget, (app.context_tokens, app.context_budget)
+        assert app.context_ratio >= 0.8
+        assert _color_is(app.context_label.cget("text_color"), COLORS["danger"])
+        assert _color_is(app.summary_label.cget("text_color"), COLORS["danger"])
 
     close_tk_window(app.root)
-    print("OK  индикатор контекста обновляется и не ломается на переполнении")
+    print("OK  индикатор показывает историю с последней суммаризации и не ломается на переполнении")
+
+
+def _color_is(actual, expected):
+    if isinstance(actual, (list, tuple)):
+        actual = actual[0] if actual else ""
+    return str(actual).lower() == str(expected).lower()
+
+
+def test_summary_cursor_advances_on_success_and_undo_clamps():
+    import tempfile
+    from pathlib import Path
+
+    import customtkinter as ctk
+
+    from dungeon.app import DungeonApp
+
+    ctk.set_appearance_mode("Dark")
+    root = ctk.CTk()
+    root.withdraw()
+    app = DungeonApp(root)
+    app.memory_bank = {"last_indexed_turn": 0, "entries": []}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        world = Path(tmp)
+        app.current_world_path = world
+        app.history = ["Игрок: а", "Мастер: б"]
+        app.covered_count = 0
+        # Пока саммари не записано, граница не двигается
+        assert app.covered_count == 0
+        app._remember_summarized_history()
+        assert app.covered_count == 2
+        assert read_summary_cursor(world) == 2
+
+        app.undo_action()
+        assert app.history == ["Игрок: а"]
+        assert app.covered_count == 1
+        assert read_summary_cursor(world) == 1
+
+        app.history = ["Игрок: а"]
+        app.covered_count = 1
+        app.sync_introduction_to_history("давным-давно")
+        assert app.history[0].startswith(INTRO_PREFIX)
+        assert app.covered_count == 2
+        assert read_summary_cursor(world) == 2
+
+        app.sync_introduction_to_history("   ")
+        assert app.covered_count == 1
+        assert not app.history[0].startswith(INTRO_PREFIX)
+
+        app.covered_count = 0
+        app.sync_introduction_to_history("ещё раз")
+        assert app.covered_count == 0
+
+    close_tk_window(app.root)
+    print("OK  граница саммари сдвигается после успеха, отмены хода и правки вступления")
 
 
 def test_stream_is_read_incrementally():

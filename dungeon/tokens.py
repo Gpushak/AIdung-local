@@ -114,3 +114,60 @@ def format_token_count(n: int) -> str:
     if n < 1000:
         return str(n)
     return f"{n / 1000:.1f}k".replace(".0k", "k")
+
+
+# Тот же запас, что при сборке хода: оценка токенов точная, поэтому буфер
+# маленький. Ниже 300 токенов истории в промпт уже нечего класть — окно
+# не опускается под этот пол, иначе модель осталась бы без хроники вовсе.
+HISTORY_SAFETY_BUFFER = 64
+HISTORY_BUDGET_FLOOR = 300
+
+
+def history_window_budget(context_size, max_tokens, static_tokens, extra_tokens=0) -> int:
+    """Сколько токенов истории ещё влезает в контекстное окно.
+
+    static_tokens — файлы мира, саммари, память, карточки и заголовок истории.
+    extra_tokens — текст текущего хода игрока: его вычитает сборка промпта,
+    а полоса заполнения смотрит бюджет без него.
+    """
+    budget = (
+        int(context_size)
+        - int(max_tokens)
+        - int(static_tokens)
+        - int(extra_tokens)
+        - HISTORY_SAFETY_BUFFER
+    )
+    if budget < HISTORY_BUDGET_FLOOR:
+        return HISTORY_BUDGET_FLOOR
+    return budget
+
+
+def unsummarized_token_count(history, covered_count) -> int:
+    """Токены сообщений, которые ещё не вошли в summary.txt.
+
+    covered_count — сколько сообщений с начала истории уже покрыто саммари.
+    К каждому сообщению добавляется 1 токен, как при нарезке истории в промпт.
+    """
+    try:
+        covered = int(covered_count)
+    except (TypeError, ValueError):
+        covered = 0
+    if covered < 0:
+        covered = 0
+    if covered > len(history):
+        covered = len(history)
+    total = 0
+    for msg in history[covered:]:
+        total += count_tokens(msg) + 1
+    return total
+
+
+def summary_due(ratio, fill_percent, enabled) -> bool:
+    """Пора ли запускать автосуммаризацию по заполнению новой истории."""
+    if not enabled:
+        return False
+    try:
+        percent = int(fill_percent)
+    except (TypeError, ValueError):
+        percent = 80
+    return float(ratio) >= percent / 100.0

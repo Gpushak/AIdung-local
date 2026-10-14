@@ -75,14 +75,13 @@ While the AI is working, the **▶ Send** button turns into a red **⏹ Stop** b
 It interrupts whatever is running at the moment:
 
 - **Reply generation** — the text received so far is kept and saved to the story, so you can edit it or use **⏪ Undo Turn**. Background summary and memory indexing are not started.
-- **Summarization / memory indexing** — the operation is cancelled, `summary.txt` and `memory_bank.json` are left unchanged, and the task will be retried after the next few turns.
+- **Summarization / memory indexing** — the operation is cancelled, `summary.txt` and `memory_bank.json` are left unchanged. Summarization retries on the next turn while the bar is still at the threshold; memory indexing retries after the next few turns.
 - **Scene Prompt** — the generation is cancelled and no dialog opens.
 
 The window with the generated prompt is **not modal**: you can copy it, switch to your image generator
 (Automatic1111, ComfyUI, Midjourney) and come back to the game without closing anything.
 
-A thin bar under the chat log always shows how much of the context window the last prompt used. It turns
-yellow near 70% and red past 90%, so you know when to run a summarization or start a new campaign.
+A thin bar under the chat log shows how much new story has accumulated since the last summarization, relative to the room still left for it in the context window. It turns yellow as that fill approaches the auto-summary threshold and red once the threshold is reached: past that point, older unsummarized lines start falling out of the prompt.
 
 ## Scene Image Prompts
 
@@ -124,6 +123,7 @@ worlds/
     ├── plot_basics.txt        # Setting and initial plot
     ├── author_notes.txt       # Style, tone, and author's preferences
     ├── summary.txt            # Compressed chronicle (updated automatically)
+    ├── summary_state.json     # How many history messages are already in the summary
     ├── story_cards.json       # Story cards
     ├── memory_bank.json       # Memory bank
     └── history.json           # Current session history
@@ -183,7 +183,7 @@ During subsequent turns, relevant memories are added to the prompt. This helps p
 
 ## Summarization
 
-Every N turns (10 by default), the AI updates `summary.txt` — a compressed chronicle of the entire story. The file takes the previous summary into account, so important facts are preserved even when recent history is trimmed due to the context limit.
+When the new story since the previous summarization fills a configured share of the remaining context (80% by default), the AI updates `summary.txt` — a compressed chronicle of the entire story. The boundary is stored in `summary_state.json` and moves only after a successful write, so stopping a summarization does not reset the bar. The file takes the previous summary into account, so important facts are preserved even when recent history is trimmed due to the context limit.
 
 Automatic summarization and the memory bank can be disabled using the buttons in the top bar or in the settings. The manual **📝 Summarize** and **🧠 Memory** buttons work independently of the automatic features.
 
@@ -196,7 +196,7 @@ Global parameters are stored in `worlds/settings.json`. You can change them eith
 | `temperature` | `0.7` | Response creativity |
 | `max_tokens` | `300` | Maximum number of tokens in a response |
 | `context_size` | `16384` | Model context window size |
-| `summary_interval` | `10` | Automatically summarize every N turns |
+| `summary_fill_percent` | `80` | Auto-summarize when new story fills this percentage of the room left in context |
 | `memory_interval` | `5` | Index memories every N turns |
 | `memory_top_k` | `5` | Number of memories/cards to include in the prompt |
 | `image_prompt_style` | `sd` | Image prompt format: `sd`, `midjourney`, `flux`, `generic` |

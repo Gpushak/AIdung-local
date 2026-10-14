@@ -32,13 +32,17 @@ from .story_cards import load_story_cards
 from .tokens import format_token_count
 from .storage import (
     CorruptedDataError,
+    clamp_summary_cursor,
+    default_summary_cursor,
     ensure_introduction_in_history,
     format_introduction_history,
     get_world_list,
     load_global_settings,
     load_world_config,
+    read_summary_cursor,
     save_global_settings,
     save_history,
+    save_summary_cursor,
 )
 
 
@@ -64,14 +68,15 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.temperature = settings["temperature"]
         self.max_tokens = settings["max_tokens"]
         self.context_size = settings["context_size"]
-        self.summary_interval = settings["summary_interval"]
+        self.summary_fill_percent = settings["summary_fill_percent"]
         self.memory_interval = settings["memory_interval"]
         self.memory_top_k = settings["memory_top_k"]
         self.stream_mode = settings["stream_mode"]
         self.summary_enabled = settings.get("summary_enabled", True)
         self.memory_enabled = settings.get("memory_enabled", True)
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
-        self.turns_since_summary = 0
+        self.covered_count = 0
+        self.context_ratio = 0.0
         self.turns_since_memory = 0
         self.memory_bank = {"last_indexed_turn": 0, "entries": []}
         self.story_cards = {"cards": []}
@@ -151,7 +156,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
                 "context_size": self.context_size,
-                "summary_interval": self.summary_interval,
+                "summary_fill_percent": self.summary_fill_percent,
                 "memory_interval": self.memory_interval,
                 "memory_top_k": self.memory_top_k,
                 "stream_mode": self.stream_mode,
@@ -277,8 +282,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.text_area._textbox.tag_config("system", foreground=COLORS["system_color"], font=("Arial", 12, "italic"))
         self.text_area.configure(state="disabled")
 
-        # Постоянный индикатор заполнения контекстного окна: токены уходят
-        # в лог и там теряются, а заполнение окна игроку важно видеть сразу.
+        # Полоса показывает, сколько новой истории накопилось с последней
+        # суммаризации — относительно места, которое для неё ещё есть в окне.
         context_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         context_frame.pack(fill=ctk.X, pady=(0, 8))
         self.context_label = ctk.CTkLabel(context_frame, text="", text_color="gray")
@@ -447,15 +452,19 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.add_system_message(self.tr("msg.memory_toggled", state=state))
 
     def update_summary_label(self):
+        if not hasattr(self, "summary_label"):
+            return
         if not self.current_world_path:
-            self.summary_label.configure(text=self.tr("summary_until"))
+            self.summary_label.configure(text=self.tr("summary_until"), text_color="gray")
             return
         if not self.summary_enabled:
             self.summary_label.configure(text=self.tr("summary.off"), text_color="gray")
             return
-        remaining = max(0, self.summary_interval - self.turns_since_summary)
-        color = COLORS["accent"] if remaining <= 2 else "gray"
-        self.summary_label.configure(text=self.tr("summary.until", n=remaining), text_color=color)
+        percent = int(round(self.context_ratio * 100))
+        self.summary_label.configure(
+            text=self.tr("summary.fill", percent=percent),
+            text_color=self._context_fill_color(self.context_ratio),
+        )
 
     def update_memory_label(self):
         if not self.current_world_path:
@@ -470,24 +479,52 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         entries_count = len(self.memory_bank.get("entries", []))
         self.memory_label.configure(text=self.tr("memory.until", n=entries_count, remaining=remaining), text_color=color)
 
-    def update_context_indicator(self, used=None):
-        """Показывает, сколько контекста занято последним промптом."""
-        if used is not None:
-            self.context_tokens = max(0, int(used))
-        total = max(1, int(self.context_size))
-        ratio = min(1.0, self.context_tokens / total)
-        if ratio < 0.7:
-            color = COLORS["player_color"]
-        elif ratio < 0.9:
-            color = COLORS["accent"]
-        else:
-            color = COLORS["danger"]
-        self.context_bar.set(ratio)
+    def _context_fill_color(self, ratio):
+        """Зелёный далеко от порога, жёлтый при приближении, красный на пороге и выше."""
+        threshold = max(1, int(self.summary_fill_percent)) / 100
+        if ratio >= threshold:
+            return COLORS["danger"]
+        if ratio >= threshold * 0.75:
+            return COLORS["accent"]
+        return COLORS["player_color"]
+
+    def update_context_indicator(self):
+        """Показывает заполнение контекста новой историей с последней суммаризации."""
+        used, budget = self.unsummarized_fill()
+        self.context_tokens = used
+        self.context_budget = max(1, int(budget))
+        self.context_ratio = used / self.context_budget
+        color = self._context_fill_color(self.context_ratio)
+        self.context_bar.set(min(1.0, self.context_ratio))
         self.context_bar.configure(progress_color=color)
         self.context_label.configure(
-            text=self.tr("context.usage", used=format_token_count(self.context_tokens), total=format_token_count(total)),
+            text=self.tr(
+                "context.since_summary",
+                used=format_token_count(self.context_tokens),
+                total=format_token_count(self.context_budget),
+            ),
             text_color=color,
         )
+        self.update_summary_label()
+
+    def _introduction_cursor_delta(self, before, after):
+        """Сдвиг границы, если вступление вставили или убрали в начале истории."""
+        if len(after) == len(before) + 1 and after and after[0].startswith(INTRO_PREFIX):
+            return 1
+        if len(before) == len(after) + 1 and before and before[0].startswith(INTRO_PREFIX):
+            return -1
+        return 0
+
+    def _load_summary_cursor(self, raw_history):
+        intro_delta = self._introduction_cursor_delta(raw_history, self.history)
+        stored = read_summary_cursor(self.current_world_path)
+        if stored is None:
+            self.covered_count = default_summary_cursor(self.current_world_path, len(self.history))
+        else:
+            if stored > 0:
+                stored += intro_delta
+            self.covered_count = clamp_summary_cursor(stored, len(self.history))
+        save_summary_cursor(self.current_world_path, self.covered_count)
 
     def initialize_world(self):
         worlds = get_world_list()
@@ -517,11 +554,11 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
         self.current_world_path = world_path
         self.world_name = world_name
-        self.turns_since_summary = 0
         self.last_sent_prompt = None
         self.history = ensure_introduction_in_history(world_path, loaded_history)
         if self.history != loaded_history:
             save_history(world_path, self.history)
+        self._load_summary_cursor(loaded_history)
         self.memory_bank = load_memory_bank(world_path)
         self.story_cards = load_story_cards(world_path)
         current_turns = count_completed_turns(self.history)
@@ -531,9 +568,8 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if restored:
             self.add_system_message(self.tr("msg.history_restored"))
         self.add_system_message(self.tr("msg.world_loaded", name=world_name))
-        self.update_summary_label()
         self.update_memory_label()
-        self.update_context_indicator(0)
+        self.update_context_indicator()
 
         self.refresh_world_combobox()
         self.world_var.set(self.world_name)
@@ -542,13 +578,13 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         if self.is_busy() or not self.history or not self.current_world_path:
             return
         self.history.pop()
-        if self.summary_enabled and self.turns_since_summary > 0:
-            self.turns_since_summary -= 1
+        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
         save_history(self.current_world_path, self.history)
+        save_summary_cursor(self.current_world_path, self.covered_count)
         self.memory_bank, self.turns_since_memory = sync_memory_bank_after_undo(self.history, self.memory_bank)
         save_memory_bank(self.current_world_path, self.memory_bank)
         self.refresh_chat_display()
-        self.update_summary_label()
+        self.update_context_indicator()
         self.update_memory_label()
         self.add_system_message(self.tr("msg.undone"))
 
@@ -606,18 +642,14 @@ class DungeonApp(DialogMixin, AIEngineMixin):
 
     def _dispatch_turn(self, target, args=(), kwargs=None):
         kwargs = kwargs or {}
-        if self.summary_enabled:
-            self.turns_since_summary += 1
         if self.memory_enabled:
             self.turns_since_memory += 1
-        if self.summary_enabled:
-            self.update_summary_label()
-        if self.memory_enabled:
             self.update_memory_label()
         self.begin_action_turn()
         Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
 
     def sync_introduction_to_history(self, intro_text):
+        before = list(self.history)
         intro_msg = format_introduction_history(intro_text)
         if self.history and self.history[0].startswith(INTRO_PREFIX):
             if intro_msg:
@@ -626,8 +658,15 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 self.history.pop(0)
         elif intro_msg:
             self.history.insert(0, intro_msg)
+        delta = self._introduction_cursor_delta(before, self.history)
+        if self.covered_count > 0 and delta:
+            self.covered_count += delta
+        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
         save_history(self.current_world_path, self.history)
+        if self.current_world_path:
+            save_summary_cursor(self.current_world_path, self.covered_count)
         self.refresh_chat_display()
+        self.update_context_indicator()
 
     def start_dm_stream(self):
         self.text_area.configure(state="normal")
