@@ -14,7 +14,20 @@ from .config import (
     STORY_CARDS_KEY,
     WORLD_FILES,
 )
-from .i18n import DM_PREFIX, PLAYER_PREFIX, default_templates, dm_text, is_dm_msg, is_player_msg, player_text
+from .i18n import (
+    DM_PREFIX,
+    PLAYER_PREFIX,
+    PROMPT_GROUPS,
+    builtin_prompt,
+    default_templates,
+    dm_text,
+    is_dm_msg,
+    is_player_msg,
+    player_text,
+    prompt_edit_issues,
+    prompt_placeholders,
+    set_prompt_overrides,
+)
 from .storage import format_introduction_history, get_world_list, save_history, save_world_files
 from .windowing import place_window
 from .story_cards import (
@@ -740,11 +753,19 @@ class DialogMixin:
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("dialog.ai_settings"))
         win.transient(self.root)
-        place_window(win, "450x950", self.root)
+        place_window(win, "780x680", self.root)
         win.grab_set()
 
-        scroll = ctk.CTkScrollableFrame(win)
-        scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        tabview = ctk.CTkTabview(win)
+        tabview.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
+        ai_tab = tabview.add(self.tr("dialog.tab_ai"))
+        game_tab = tabview.add(self.tr("dialog.tab_game"))
+        prompt_tab = tabview.add(self.tr("dialog.tab_prompts"))
+
+        scroll = ctk.CTkScrollableFrame(ai_tab)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        game = ctk.CTkScrollableFrame(game_tab)
+        game.pack(fill=tk.BOTH, expand=True)
 
         api_presets_local = [dict(p) for p in self.api_presets]
 
@@ -860,15 +881,6 @@ class DialogMixin:
         model_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
         model_entry.insert(0, self.model)
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.gen_params"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
-
-        stream_var = ctk.BooleanVar(value=self.stream_mode)
-        summary_enabled_var = ctk.BooleanVar(value=self.summary_enabled)
-        memory_enabled_var = ctk.BooleanVar(value=self.memory_enabled)
-        ctk.CTkCheckBox(scroll, text=self.tr("dialog.stream"), variable=stream_var).pack(anchor=tk.W, padx=10, pady=(5, 10))
-        ctk.CTkCheckBox(scroll, text=self.tr("dialog.auto_summary"), variable=summary_enabled_var).pack(anchor=tk.W, padx=10, pady=5)
-        ctk.CTkCheckBox(scroll, text=self.tr("dialog.memory_bank"), variable=memory_enabled_var).pack(anchor=tk.W, padx=10, pady=(0, 10))
-
         ctk.CTkLabel(scroll, text=self.tr("dialog.temperature")).pack(anchor=tk.W, padx=10)
         temp_val_lbl = ctk.CTkLabel(scroll, text=f"{self.temperature:.1f}", text_color=COLORS["accent"])
         temp_val_lbl.pack(anchor=tk.E, padx=10)
@@ -879,11 +891,6 @@ class DialogMixin:
         temp_slider = ctk.CTkSlider(scroll, from_=0.0, to=2.0, number_of_steps=20, command=update_temp_lbl)
         temp_slider.set(self.temperature)
         temp_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
-
-        ctk.CTkLabel(scroll, text=self.tr("dialog.max_tokens")).pack(anchor=tk.W, padx=10)
-        tokens_entry = ctk.CTkEntry(scroll)
-        tokens_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
-        tokens_entry.insert(0, str(self.max_tokens))
 
         ctk.CTkLabel(scroll, text=self.tr("dialog.context_size")).pack(anchor=tk.W, padx=10)
         ctx_val_lbl = ctk.CTkLabel(scroll, text=f"{self.context_size}", text_color=COLORS["accent"])
@@ -896,36 +903,184 @@ class DialogMixin:
         ctx_slider.set(self.context_size)
         ctx_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.summary_fill")).pack(anchor=tk.W, padx=10)
-        fill_val_lbl = ctk.CTkLabel(scroll, text=f"{self.summary_fill_percent}%", text_color=COLORS["accent"])
+        ctk.CTkLabel(game, text=self.tr("dialog.gen_params"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        stream_var = ctk.BooleanVar(value=self.stream_mode)
+        summary_enabled_var = ctk.BooleanVar(value=self.summary_enabled)
+        memory_enabled_var = ctk.BooleanVar(value=self.memory_enabled)
+        ctk.CTkCheckBox(game, text=self.tr("dialog.stream"), variable=stream_var).pack(anchor=tk.W, padx=10, pady=(5, 10))
+
+        ctk.CTkLabel(game, text=self.tr("dialog.max_tokens")).pack(anchor=tk.W, padx=10)
+        tokens_entry = ctk.CTkEntry(game)
+        tokens_entry.pack(fill=ctk.X, padx=10, pady=(5, 15))
+        tokens_entry.insert(0, str(self.max_tokens))
+
+        ctk.CTkLabel(game, text=self.tr("dialog.section_summary"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ctk.CTkCheckBox(game, text=self.tr("dialog.auto_summary"), variable=summary_enabled_var).pack(anchor=tk.W, padx=10, pady=5)
+
+        ctk.CTkLabel(game, text=self.tr("dialog.summary_fill")).pack(anchor=tk.W, padx=10)
+        fill_val_lbl = ctk.CTkLabel(game, text=f"{self.summary_fill_percent}%", text_color=COLORS["accent"])
         fill_val_lbl.pack(anchor=tk.E, padx=10)
 
         def update_fill_lbl(val):
             fill_val_lbl.configure(text=f"{int(round(float(val)))}%")
 
-        fill_slider = ctk.CTkSlider(scroll, from_=50, to=95, number_of_steps=45, command=update_fill_lbl)
+        fill_slider = ctk.CTkSlider(game, from_=50, to=95, number_of_steps=45, command=update_fill_lbl)
         fill_slider.set(self.summary_fill_percent)
         fill_slider.pack(fill=ctk.X, padx=10, pady=(0, 15))
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.memory_every")).pack(anchor=tk.W, padx=10, pady=(10, 0))
+        ctk.CTkLabel(game, text=self.tr("dialog.section_memory"), font=("", 13, "bold")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ctk.CTkCheckBox(game, text=self.tr("dialog.memory_bank"), variable=memory_enabled_var).pack(anchor=tk.W, padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(game, text=self.tr("dialog.memory_every")).pack(anchor=tk.W, padx=10, pady=(10, 0))
         memory_interval_var = ctk.StringVar(value=str(self.memory_interval))
-        ctk.CTkOptionMenu(scroll, variable=memory_interval_var, values=["3", "5", "10", "15"]).pack(
+        ctk.CTkOptionMenu(game, variable=memory_interval_var, values=["3", "5", "10", "15"]).pack(
             anchor=tk.W, padx=10, pady=5
         )
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.memory_top_k")).pack(anchor=tk.W, padx=10)
+        ctk.CTkLabel(game, text=self.tr("dialog.memory_top_k")).pack(anchor=tk.W, padx=10)
         memory_top_k_var = ctk.StringVar(value=str(self.memory_top_k))
-        ctk.CTkOptionMenu(scroll, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=10, pady=5)
+        ctk.CTkOptionMenu(game, variable=memory_top_k_var, values=["3", "5", "7", "10"]).pack(anchor=tk.W, padx=10, pady=5)
 
-        ctk.CTkLabel(scroll, text=self.tr("dialog.image_style")).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        ctk.CTkLabel(game, text=self.tr("dialog.image_style")).pack(anchor=tk.W, padx=10, pady=(10, 5))
         image_style_var = ctk.StringVar(value=self.tr(f"image_style.{self.image_prompt_style}"))
         ctk.CTkOptionMenu(
-            scroll,
+            game,
             variable=image_style_var,
             values=[self.tr(f"image_style.{s}") for s in IMAGE_PROMPT_STYLES],
         ).pack(anchor=tk.W, padx=10, pady=5)
 
+        prompt_drafts = {}
+        prompt_current = {"key": None}
+
+        def stored_prompt(key):
+            if key in prompt_drafts:
+                return prompt_drafts[key]
+            override = self.prompt_overrides.get(self.language, {}).get(key)
+            if isinstance(override, str) and override.strip():
+                return override
+            return builtin_prompt(self.language, key)
+
+        def flush_prompt_editor():
+            key = prompt_current["key"]
+            if key is None:
+                return
+            prompt_drafts[key] = prompt_editor.get("1.0", tk.END).strip()
+
+        def show_prompt(key):
+            flush_prompt_editor()
+            prompt_current["key"] = key
+            prompt_editor.delete("1.0", tk.END)
+            prompt_editor.insert("1.0", stored_prompt(key))
+            fields = prompt_placeholders(builtin_prompt(self.language, key))
+            if fields:
+                shown = ", ".join("{" + name + "}" for name in fields)
+                prompt_hint.configure(text=self.tr("dialog.prompt_fields", fields=shown))
+            else:
+                prompt_hint.configure(text=self.tr("dialog.prompt_fields_none"))
+
+        def reset_prompt():
+            key = prompt_current["key"]
+            if key is None:
+                return
+            prompt_drafts[key] = builtin_prompt(self.language, key)
+            prompt_editor.delete("1.0", tk.END)
+            prompt_editor.insert("1.0", prompt_drafts[key])
+
+        def on_prompt_selected(_event=None):
+            sel = prompt_list.curselection()
+            if not sel:
+                return
+            key = prompt_index_to_key[sel[0]]
+            if key is None:
+                return
+            if key == prompt_current["key"]:
+                return
+            show_prompt(key)
+
+        prompt_body = ctk.CTkFrame(prompt_tab, fg_color="transparent")
+        prompt_body.pack(fill=tk.BOTH, expand=True)
+        prompt_left = ctk.CTkFrame(prompt_body, width=220)
+        prompt_left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8), pady=4)
+        prompt_left.pack_propagate(False)
+        prompt_list = tk.Listbox(
+            prompt_left,
+            bg=COLORS["listbox_bg"],
+            fg="white",
+            selectbackground=COLORS["listbox_sel"],
+            relief=tk.FLAT,
+            font=("Arial", 11),
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        prompt_list.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        prompt_index_to_key = []
+        first_prompt_key = None
+        for group_key, keys in PROMPT_GROUPS:
+            prompt_list.insert(tk.END, self.tr(group_key))
+            prompt_index_to_key.append(None)
+            for key in keys:
+                suffix = key[len("prompt.") :]
+                prompt_list.insert(tk.END, "  " + self.tr(f"prompt_name.{suffix}"))
+                prompt_index_to_key.append(key)
+                if first_prompt_key is None:
+                    first_prompt_key = key
+        prompt_list.bind("<<ListboxSelect>>", on_prompt_selected)
+
+        prompt_right = ctk.CTkFrame(prompt_body, fg_color="transparent")
+        prompt_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=4)
+        prompt_editor = ctk.CTkTextbox(prompt_right, wrap=tk.WORD, font=ctk.CTkFont(size=13))
+        prompt_editor.pack(fill=tk.BOTH, expand=True)
+        prompt_editor.bind("<Button-3>", self.show_context_menu)
+        prompt_hint = ctk.CTkLabel(prompt_right, text="", text_color="gray", anchor="w", justify=tk.LEFT)
+        prompt_hint.pack(fill=tk.X, pady=(6, 0))
+        ctk.CTkButton(prompt_right, text=self.tr("btn.reset_prompt"), width=120, command=reset_prompt).pack(
+            anchor=tk.W, pady=(6, 0)
+        )
+        if first_prompt_key is not None:
+            show_prompt(first_prompt_key)
+            prompt_list.selection_set(1)
+
+        def prompt_problems():
+            flush_prompt_editor()
+            lines = []
+            for key, text in prompt_drafts.items():
+                issues = prompt_edit_issues(self.language, key, text)
+                if not issues:
+                    continue
+                suffix = key[len("prompt.") :]
+                name = self.tr(f"prompt_name.{suffix}")
+                if issues["missing"]:
+                    fields = ", ".join("{" + item + "}" for item in issues["missing"])
+                    lines.append(self.tr("dialog.prompt_missing_fields", name=name, fields=fields))
+                if issues["unknown"]:
+                    fields = ", ".join("{" + item + "}" for item in issues["unknown"])
+                    lines.append(self.tr("dialog.prompt_unknown_fields", name=name, fields=fields))
+                if issues["broken"]:
+                    lines.append(self.tr("dialog.prompt_broken", name=name))
+            return lines
+
+        def apply_prompt_drafts():
+            lang = self.language
+            current = dict(self.prompt_overrides.get(lang, {}))
+            for key, text in prompt_drafts.items():
+                if not text.strip() or text == builtin_prompt(lang, key):
+                    current.pop(key, None)
+                else:
+                    current[key] = text
+            overrides = {
+                "ru": dict(self.prompt_overrides.get("ru", {})),
+                "en": dict(self.prompt_overrides.get("en", {})),
+            }
+            overrides[lang] = current
+            self.prompt_overrides = set_prompt_overrides(overrides)
+
         def apply_settings():
+            problems = prompt_problems()
+            if problems:
+                messagebox.showwarning(self.tr("dialog.prompt_invalid_title"), "\n".join(problems), parent=win)
+                return
+            apply_prompt_drafts()
             api_url = api_url_entry.get().strip()
             if api_url:
                 self.api_url = api_url

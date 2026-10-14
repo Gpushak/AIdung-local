@@ -25,6 +25,7 @@ from .i18n import (
     is_player_msg,
     normalize_lang,
     player_text,
+    set_prompt_overrides,
     t,
 )
 from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
@@ -51,6 +52,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.root = root
         settings = load_global_settings()
         self.language = normalize_lang(settings.get("language", "ru"))
+        self.prompt_overrides = set_prompt_overrides(settings.get("prompt_overrides"))
         self.root.title(t(self.language, "window_title"))
         self.root.geometry(WINDOW_SIZE)
 
@@ -164,6 +166,7 @@ class DungeonApp(DialogMixin, AIEngineMixin):
                 "memory_enabled": self.memory_enabled,
                 "image_prompt_style": self.image_prompt_style,
                 "language": self.language,
+                "prompt_overrides": self.prompt_overrides,
             }
         )
 

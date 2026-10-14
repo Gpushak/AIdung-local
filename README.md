@@ -39,7 +39,7 @@ windows never end up underneath it.
 2. Fill in the tabs: AI instructions, plot basics, author notes, and story cards (optional).
 3. Fill in the introduction tab with a description of the situation where you want the story to begin.
 4. Enter an action in the input field (or leave it empty) and press **▶ Send** (or Enter).
-5. If necessary, open **⚙️ AI Settings** and adjust the temperature, context size, and intervals.
+5. If necessary, open **⚙️ Settings** and adjust the temperature, context size, and intervals.
 
 ## Interface
 
@@ -53,7 +53,7 @@ windows never end up underneath it.
 | **📁 World Files** | Edit the world's text files |
 | **📇 Cards** | Story card editor |
 | **🔄 Worlds** | Create, load, and delete worlds |
-| **⚙️ AI Settings** | Generation and feature settings |
+| **⚙️ Settings** | Generation and feature settings |
 
 ### Action Bar
 
@@ -99,7 +99,7 @@ If the model does not return valid JSON, the raw response is shown as the prompt
 
 ### Prompt Formats
 
-Different image models expect different markup, so the format is selected in **⚙️ AI Settings → Image prompt format**:
+Different image models expect different markup, so the format is selected in **⚙️ Settings → Image prompt format**:
 
 | Format | What the prompt looks like |
 |--------|---------------------------|

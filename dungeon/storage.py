@@ -12,7 +12,7 @@ from .config import (
     SETTINGS_FILE,
     WORLD_FILES,
 )
-from .i18n import INTRO_PREFIX
+from .i18n import INTRO_PREFIX, normalize_prompt_overrides
 
 
 class CorruptedDataError(Exception):
@@ -186,6 +186,7 @@ def load_global_settings():
         "memory_enabled": True,
         "image_prompt_style": DEFAULT_IMAGE_STYLE,
         "language": "ru",
+        "prompt_overrides": {"ru": {}, "en": {}},
     }
     # Настройки тоже читаем с попыткой отката на .bak: потерять сохранённые
     # API-ключи из-за битого JSON неприятно, а дефолты работают и без них.
@@ -203,6 +204,7 @@ def load_global_settings():
     if defaults.get("image_prompt_style") not in IMAGE_PROMPT_STYLES:
         defaults["image_prompt_style"] = DEFAULT_IMAGE_STYLE
     defaults["summary_fill_percent"] = clamp_summary_fill_percent(defaults.get("summary_fill_percent", 80))
+    defaults["prompt_overrides"] = normalize_prompt_overrides(defaults.get("prompt_overrides"))
     return defaults
 
 
@@ -211,7 +213,7 @@ def clamp_summary_fill_percent(value):
     try:
         percent = int(value)
     except (TypeError, ValueError):
-        percent = 90
+        percent = 80
     return min(95, max(50, percent))
 
 

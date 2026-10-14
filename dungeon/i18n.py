@@ -1,3 +1,5 @@
+import re
+
 PLAYER_PREFIX = "Игрок:"
 DM_PREFIX = "Мастер:"
 INTRO_PREFIX = "Вступление:"
@@ -15,7 +17,7 @@ TRANSLATIONS = {
         "btn.world_files": "📁 Файлы мира",
         "btn.cards": "📇 Карточки",
         "btn.worlds": "🔄 Миры",
-        "btn.ai_settings": "⚙️ Настройки ИИ",
+        "btn.ai_settings": "⚙️ Настройки",
         "btn.quit": "❌ Выйти",
         "btn.next": "❓ Дальше?",
         "btn.reroll": "🔁 Реролл",
@@ -81,7 +83,43 @@ TRANSLATIONS = {
         "dialog.next_hint": "Опишите, что должно произойти в следующем ходу.\nИИ реализует это в повествовании.",
         "dialog.empty_input": "Пустой ввод",
         "dialog.empty_next": "Опишите, что должно произойти дальше.",
-        "dialog.ai_settings": "⚙️ Настройки ИИ",
+        "dialog.ai_settings": "⚙️ Настройки",
+        "dialog.tab_ai": "Настройки ИИ",
+        "dialog.tab_game": "Настройки игры",
+        "dialog.tab_prompts": "Настройки промптов",
+        "dialog.section_summary": "Суммаризация",
+        "dialog.section_memory": "Банк памяти",
+        "dialog.prompt_fields": "Обязательные поля: {fields}",
+        "dialog.prompt_fields_none": "Обязательных полей нет.",
+        "dialog.prompt_missing_fields": "В промпте «{name}» не хватает полей: {fields}.",
+        "dialog.prompt_unknown_fields": "В промпте «{name}» есть неизвестные поля: {fields}.",
+        "dialog.prompt_broken": "Промпт «{name}» нельзя подставить: проверьте фигурные скобки.",
+        "dialog.prompt_invalid_title": "Промпт",
+        "prompt_group.turn": "Ход",
+        "prompt_group.summary": "Суммаризация",
+        "prompt_group.memory": "Память",
+        "prompt_group.cards": "Карточки",
+        "prompt_group.scene": "Сцена",
+        "prompt_name.continue": "Продолжение хода",
+        "prompt_name.direction": "Направление автора",
+        "prompt_name.no_reasoning": "Без размышлений",
+        "prompt_name.history_header": "Заголовок истории",
+        "prompt_name.summary": "Суммаризация",
+        "prompt_name.summary_header": "Заголовок хроники",
+        "prompt_name.none": "Пустое значение",
+        "prompt_name.memory_index": "Индексация памяти",
+        "prompt_name.memory_header": "Заголовок памяти",
+        "prompt_name.card_desc_gen": "Описание карточки",
+        "prompt_name.cards_header": "Заголовок карточек",
+        "prompt_name.card_triggers": "Триггеры карточки",
+        "prompt_name.card_always": "Всегда активная карточка",
+        "prompt_name.cards_missing": "Нет карточек",
+        "prompt_name.scene_image": "Промпт сцены",
+        "prompt_name.scene_style.sd": "Стиль Stable Diffusion",
+        "prompt_name.scene_style.midjourney": "Стиль Midjourney",
+        "prompt_name.scene_style.flux": "Стиль Flux",
+        "prompt_name.scene_style.generic": "Универсальный стиль",
+        "btn.reset_prompt": "Сбросить",
         "dialog.api_config": "Конфигурация API",
         "dialog.manual_preset": "— Вручную —",
         "dialog.save_preset": "Сохранить конфигурацию",
@@ -322,7 +360,7 @@ TRANSLATIONS = {
         "btn.world_files": "📁 World files",
         "btn.cards": "📇 Cards",
         "btn.worlds": "🔄 Worlds",
-        "btn.ai_settings": "⚙️ AI settings",
+        "btn.ai_settings": "⚙️ Settings",
         "btn.quit": "❌ Quit",
         "btn.next": "❓ What next?",
         "btn.reroll": "🔁 Reroll",
@@ -388,7 +426,43 @@ TRANSLATIONS = {
         "dialog.next_hint": "Describe what should happen on the next turn.\nThe AI will write it into the story.",
         "dialog.empty_input": "Empty input",
         "dialog.empty_next": "Describe what should happen next.",
-        "dialog.ai_settings": "⚙️ AI settings",
+        "dialog.ai_settings": "⚙️ Settings",
+        "dialog.tab_ai": "AI settings",
+        "dialog.tab_game": "Game settings",
+        "dialog.tab_prompts": "Prompt settings",
+        "dialog.section_summary": "Summary",
+        "dialog.section_memory": "Memory bank",
+        "dialog.prompt_fields": "Required fields: {fields}",
+        "dialog.prompt_fields_none": "No required fields.",
+        "dialog.prompt_missing_fields": "Prompt “{name}” is missing fields: {fields}.",
+        "dialog.prompt_unknown_fields": "Prompt “{name}” has unknown fields: {fields}.",
+        "dialog.prompt_broken": "Prompt “{name}” cannot be filled in: check the braces.",
+        "dialog.prompt_invalid_title": "Prompt",
+        "prompt_group.turn": "Turn",
+        "prompt_group.summary": "Summary",
+        "prompt_group.memory": "Memory",
+        "prompt_group.cards": "Cards",
+        "prompt_group.scene": "Scene",
+        "prompt_name.continue": "Continue the turn",
+        "prompt_name.direction": "Author direction",
+        "prompt_name.no_reasoning": "No reasoning",
+        "prompt_name.history_header": "History header",
+        "prompt_name.summary": "Summarization",
+        "prompt_name.summary_header": "Chronicle header",
+        "prompt_name.none": "Empty value",
+        "prompt_name.memory_index": "Memory indexing",
+        "prompt_name.memory_header": "Memory header",
+        "prompt_name.card_desc_gen": "Card description",
+        "prompt_name.cards_header": "Cards header",
+        "prompt_name.card_triggers": "Card triggers",
+        "prompt_name.card_always": "Always-active card",
+        "prompt_name.cards_missing": "No cards",
+        "prompt_name.scene_image": "Scene prompt",
+        "prompt_name.scene_style.sd": "Stable Diffusion style",
+        "prompt_name.scene_style.midjourney": "Midjourney style",
+        "prompt_name.scene_style.flux": "Flux style",
+        "prompt_name.scene_style.generic": "Generic style",
+        "btn.reset_prompt": "Reset",
         "dialog.api_config": "API configuration",
         "dialog.manual_preset": "— Manual —",
         "dialog.save_preset": "Save configuration",
@@ -698,10 +772,145 @@ def normalize_lang(value):
     return "en" if value.startswith("en") else "ru"
 
 
-def t(lang, key, **kwargs):
+# Тексты, которые уходят модели или вставляются в её контекст.
+# Группы задают порядок во вкладке «Настройки промптов».
+PROMPT_GROUPS = (
+    (
+        "prompt_group.turn",
+        (
+            "prompt.continue",
+            "prompt.direction",
+            "prompt.no_reasoning",
+            "prompt.history_header",
+        ),
+    ),
+    (
+        "prompt_group.summary",
+        (
+            "prompt.summary",
+            "prompt.summary_header",
+            "prompt.none",
+        ),
+    ),
+    (
+        "prompt_group.memory",
+        (
+            "prompt.memory_index",
+            "prompt.memory_header",
+        ),
+    ),
+    (
+        "prompt_group.cards",
+        (
+            "prompt.card_desc_gen",
+            "prompt.cards_header",
+            "prompt.card_triggers",
+            "prompt.card_always",
+            "prompt.cards_missing",
+        ),
+    ),
+    (
+        "prompt_group.scene",
+        (
+            "prompt.scene_image",
+            "prompt.scene_style.sd",
+            "prompt.scene_style.midjourney",
+            "prompt.scene_style.flux",
+            "prompt.scene_style.generic",
+        ),
+    ),
+)
+
+PROMPT_KEYS = tuple(key for _group, keys in PROMPT_GROUPS for key in keys)
+
+# Правки из настроек. Пустой словарь — встроенные тексты.
+_PROMPT_OVERRIDES = {"ru": {}, "en": {}}
+
+# Имя поля {history}. Удвоенные скобки {{ }} — это литерал для format и не поле.
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def prompt_keys():
+    return PROMPT_KEYS
+
+
+def builtin_prompt(lang, key):
+    """Встроенный текст без пользовательских правок."""
     lang = normalize_lang(lang)
     table = TRANSLATIONS.get(lang, TRANSLATIONS["ru"])
-    text = table.get(key) or TRANSLATIONS["ru"].get(key, key)
+    text = table.get(key)
+    if text is None:
+        text = TRANSLATIONS["ru"].get(key, key)
+    return text
+
+
+def prompt_placeholders(text):
+    """Имена полей в порядке появления. Удвоенные скобки пропускаются."""
+    if not isinstance(text, str):
+        return []
+    masked = text.replace("{{", "").replace("}}", "")
+    return list(dict.fromkeys(_PLACEHOLDER.findall(masked)))
+
+
+def prompt_edit_issues(lang, key, text):
+    """Проверяет правку промпта.
+
+    Пустой текст и точное совпадение со встроенным — это сброс, не ошибка.
+    Иначе возвращает словарь missing/unknown/broken, либо None, если текст можно хранить.
+    """
+    text = text if isinstance(text, str) else ""
+    if not text.strip() or text == builtin_prompt(lang, key):
+        return None
+    required = prompt_placeholders(builtin_prompt(lang, key))
+    present = prompt_placeholders(text)
+    missing = [name for name in required if name not in present]
+    unknown = [name for name in present if name not in required]
+    broken = False
+    if not missing and not unknown:
+        try:
+            text.format(**{name: "x" for name in required})
+        except (ValueError, KeyError, IndexError):
+            broken = True
+    if not missing and not unknown and not broken:
+        return None
+    return {"missing": missing, "unknown": unknown, "broken": broken}
+
+
+def normalize_prompt_overrides(raw):
+    """Оставляет только непустые правки известных промптов, отличные от встроенного текста."""
+    cleaned = {"ru": {}, "en": {}}
+    if not isinstance(raw, dict):
+        return cleaned
+    allowed = set(PROMPT_KEYS)
+    for lang in ("ru", "en"):
+        bucket = raw.get(lang)
+        if not isinstance(bucket, dict):
+            continue
+        for key, value in bucket.items():
+            if key not in allowed or not isinstance(value, str) or not value.strip():
+                continue
+            if value == builtin_prompt(lang, key):
+                continue
+            if prompt_edit_issues(lang, key, value):
+                continue
+            cleaned[lang][key] = value
+    return cleaned
+
+
+def set_prompt_overrides(raw):
+    """Подставляет сохранённые правки. Вызывается при запуске и при сохранении настроек."""
+    global _PROMPT_OVERRIDES
+    _PROMPT_OVERRIDES = normalize_prompt_overrides(raw)
+    return {"ru": dict(_PROMPT_OVERRIDES["ru"]), "en": dict(_PROMPT_OVERRIDES["en"])}
+
+
+def t(lang, key, **kwargs):
+    lang = normalize_lang(lang)
+    override = _PROMPT_OVERRIDES.get(lang, {}).get(key)
+    if isinstance(override, str) and override.strip():
+        text = override
+    else:
+        text = builtin_prompt(lang, key)
     if kwargs:
         return text.format(**kwargs)
     return text
