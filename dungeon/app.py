@@ -1,53 +1,34 @@
-from threading import Thread
-
 import customtkinter as ctk
-import tkinter as tk
-from tkinter import messagebox
 
-from .ai_engine import ACTION, AIEngineMixin
+import tkinter as tk
+
 from .config import (
-    BASE_DIR,
     COLORS,
     DEFAULT_IMAGE_STYLE,
-    INTRODUCTION_FILE,
     STORY_CARDS_KEY,
     WINDOW_SIZE,
 )
-from .dialogs import DialogMixin
+
 from .i18n import (
-    DM_PREFIX,
-    INTRO_PREFIX,
-    PLAYER_PREFIX,
-    dm_text,
-    intro_text,
-    is_dm_msg,
-    is_intro_msg,
-    is_player_msg,
     normalize_lang,
-    player_text,
     set_prompt_overrides,
     t,
 )
-from .memory import count_completed_turns, load_memory_bank, save_memory_bank, sync_memory_bank_after_undo
-from .story_cards import load_story_cards
+
 from .tokens import format_token_count
+
 from .storage import (
-    CorruptedDataError,
-    clamp_summary_cursor,
-    default_summary_cursor,
-    ensure_introduction_in_history,
-    format_introduction_history,
     get_world_list,
     load_global_settings,
-    load_world_config,
-    read_summary_cursor,
     save_global_settings,
     save_history,
-    save_summary_cursor,
 )
+from .ai_engine import AIEngineMixin
+from .chat import ChatMixin
+from .dialogs import DialogMixin
+from .session import SessionMixin
 
-
-class DungeonApp(DialogMixin, AIEngineMixin):
+class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
     def __init__(self, root):
         self.root = root
         settings = load_global_settings()
@@ -360,65 +341,6 @@ class DungeonApp(DialogMixin, AIEngineMixin):
         self.input_field.bind("<Escape>", self.handle_escape)
         self.text_area.bind("<Escape>", self.handle_escape)
 
-    def handle_input_enter(self, event):
-        if event.state & 0x1:
-            return
-        self.send_action()
-        return "break"
-
-    def handle_text_shortcut(self, event):
-        """Обрабатывает Ctrl-сочетания по физическому коду клавиши."""
-        key_commands = {
-            65: "select_all",
-            67: "copy",
-            86: "paste",
-            88: "cut",
-        }
-        command = key_commands.get(event.keycode)
-        if command is None:
-            return
-
-        target = event.widget._textbox if hasattr(event.widget, "_textbox") else event.widget
-        if command == "select_all":
-            self.select_all_text(target)
-        elif command == "copy":
-            self.copy_selected_text(target)
-        else:
-            virtual_event = {"paste": "<<Paste>>", "cut": "<<Cut>>"}[command]
-            target.event_generate(virtual_event)
-        return "break"
-
-    def copy_selected_text(self, target):
-        try:
-            selected_text = target.selection_get()
-        except tk.TclError:
-            return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(selected_text)
-
-    def select_all_text(self, target):
-        target.tag_add(tk.SEL, "1.0", "end-1c")
-        target.mark_set(tk.INSERT, "1.0")
-        target.see(tk.INSERT)
-
-    def refresh_chat_display(self):
-        self.text_area.configure(state="normal")
-        self.text_area.delete("1.0", tk.END)
-        if self.history:
-            for msg in self.history:
-                if is_player_msg(msg):
-                    text = player_text(msg)
-                    if text:
-                        self.text_area.insert(tk.END, f"\n🎮 {text}\n", "player")
-                elif is_dm_msg(msg):
-                    self.text_area.insert(tk.END, f"\n📜 {dm_text(msg)}\n", "dm")
-                elif is_intro_msg(msg):
-                    self.text_area.insert(tk.END, f"\n📖 {intro_text(msg)}\n", "intro")
-                else:
-                    self.text_area.insert(tk.END, f"\n{msg}\n", "system")
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
     def update_toggle_buttons(self):
         if self.summary_enabled:
             self.summary_toggle_btn.configure(
@@ -509,293 +431,3 @@ class DungeonApp(DialogMixin, AIEngineMixin):
             text_color=color,
         )
         self.update_summary_label()
-
-    def _introduction_cursor_delta(self, before, after):
-        """Сдвиг границы, если вступление вставили или убрали в начале истории."""
-        if len(after) == len(before) + 1 and after and after[0].startswith(INTRO_PREFIX):
-            return 1
-        if len(before) == len(after) + 1 and before and before[0].startswith(INTRO_PREFIX):
-            return -1
-        return 0
-
-    def _load_summary_cursor(self, raw_history):
-        intro_delta = self._introduction_cursor_delta(raw_history, self.history)
-        stored = read_summary_cursor(self.current_world_path)
-        if stored is None:
-            self.covered_count = default_summary_cursor(self.current_world_path, len(self.history))
-        else:
-            if stored > 0:
-                stored += intro_delta
-            self.covered_count = clamp_summary_cursor(stored, len(self.history))
-        save_summary_cursor(self.current_world_path, self.covered_count)
-
-    def initialize_world(self):
-        worlds = get_world_list()
-        if not worlds:
-            if messagebox.askyesno(self.tr("dialog.no_worlds_title"), self.tr("dialog.no_worlds_q")):
-                self.create_world_dialog()
-            else:
-                self.add_system_message(self.tr("msg.welcome"))
-        else:
-            self.load_world(worlds[0])
-
-    def load_world(self, world_name):
-        world_path = BASE_DIR / world_name
-        if not world_path.exists():
-            return
-
-        # Сначала читаем и проверяем данные, и только потом меняем состояние:
-        # при повреждённом файле текущий мир должен остаться нетронутым.
-        try:
-            _, loaded_history, restored = load_world_config(world_name)
-        except CorruptedDataError as e:
-            messagebox.showerror(
-                self.tr("dialog.corrupt_title"),
-                self.tr("dialog.corrupt_history", name=world_name, file=e.path.name, detail=e.detail),
-            )
-            return
-
-        self.current_world_path = world_path
-        self.world_name = world_name
-        self.last_sent_prompt = None
-        self.history = ensure_introduction_in_history(world_path, loaded_history)
-        if self.history != loaded_history:
-            save_history(world_path, self.history)
-        self._load_summary_cursor(loaded_history)
-        self.memory_bank = load_memory_bank(world_path)
-        self.story_cards = load_story_cards(world_path)
-        current_turns = count_completed_turns(self.history)
-        self.turns_since_memory = current_turns - self.memory_bank.get("last_indexed_turn", 0)
-
-        self.refresh_chat_display()
-        if restored:
-            self.add_system_message(self.tr("msg.history_restored"))
-        self.add_system_message(self.tr("msg.world_loaded", name=world_name))
-        self.update_memory_label()
-        self.update_context_indicator()
-
-        self.refresh_world_combobox()
-        self.world_var.set(self.world_name)
-
-    def undo_action(self):
-        if self.is_busy() or not self.history or not self.current_world_path:
-            return
-        self.history.pop()
-        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
-        save_history(self.current_world_path, self.history)
-        save_summary_cursor(self.current_world_path, self.covered_count)
-        self.memory_bank, self.turns_since_memory = sync_memory_bank_after_undo(self.history, self.memory_bank)
-        save_memory_bank(self.current_world_path, self.memory_bank)
-        self.refresh_chat_display()
-        self.update_context_indicator()
-        self.update_memory_label()
-        self.add_system_message(self.tr("msg.undone"))
-
-    def rewind_last_reply(self):
-        """Убирает последний ответ мастера и не считает новый ответ уже сжатым.
-
-        Если граница стояла на конце истории, удалённый ответ выпадает из
-        покрытого префикса. Иначе следующий ответ занял бы его место и
-        больше никогда не попал бы в хронику.
-        """
-        if self.history and is_dm_msg(self.history[-1]):
-            self.history.pop()
-        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
-        if self.current_world_path:
-            save_summary_cursor(self.current_world_path, self.covered_count)
-        if self.history and is_player_msg(self.history[-1]):
-            return player_text(self.history[-1])
-        return ""
-
-    def regenerate_action(self):
-        if self.is_busy() or not self.history or not self.current_world_path:
-            return
-
-        last_player_input = self.rewind_last_reply()
-        save_history(self.current_world_path, self.history)
-        self.refresh_chat_display()
-        self.update_context_indicator()
-
-        self.begin_action_turn()
-        Thread(target=self.process_action, args=(last_player_input,), daemon=True).start()
-
-    def begin_action_turn(self):
-        """Отмечает ход как выполняющийся и выдаёт ему свежий флаг отмены."""
-        self.processing = True
-        self._begin_operation(ACTION)
-        self.refresh_busy_state()
-
-    def on_send_or_stop(self):
-        """Кнопка отправки: во время генерации она работает как «Стоп»."""
-        if self.is_busy():
-            self.request_stop_generation()
-        else:
-            self.send_action()
-
-    def request_stop_generation(self):
-        stopped = self.request_stop()
-        if stopped:
-            self.add_system_message(self.tr("msg.stop_requested"))
-            self.refresh_busy_state()
-
-    def handle_escape(self, event=None):
-        if self.is_busy():
-            self.request_stop_generation()
-            return "break"
-
-    def send_action(self):
-        if self.is_busy() or not self.current_world_path:
-            return
-        user_input = self.input_field.get("1.0", tk.END).strip()
-        self.input_field.delete("1.0", tk.END)
-
-        if user_input:
-            self.add_player_message(user_input)
-
-        self._dispatch_turn(self.process_action, (user_input,))
-
-    def _dispatch_turn(self, target, args=(), kwargs=None):
-        kwargs = kwargs or {}
-        if self.memory_enabled:
-            self.turns_since_memory += 1
-            self.update_memory_label()
-        self.begin_action_turn()
-        Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
-
-    def note_history_revised(self, index):
-        """Правка уже сжатой реплики снимает отметку с неё и со всего, что после.
-
-        Саммари описывает старый текст, а граница — это префикс. Откатить её
-        к изменённому сообщению, иначе новый текст так и останется «покрытым».
-        """
-        if index < self.covered_count:
-            self.covered_count = max(0, int(index))
-            if self.current_world_path:
-                save_summary_cursor(self.current_world_path, self.covered_count)
-
-    def sync_introduction_to_history(self, intro_text):
-        before = list(self.history)
-        intro_msg = format_introduction_history(intro_text)
-        if self.history and self.history[0].startswith(INTRO_PREFIX):
-            if intro_msg:
-                self.history[0] = intro_msg
-            else:
-                self.history.pop(0)
-        elif intro_msg:
-            self.history.insert(0, intro_msg)
-        delta = self._introduction_cursor_delta(before, self.history)
-        if self.covered_count > 0 and delta:
-            self.covered_count += delta
-        self.covered_count = clamp_summary_cursor(self.covered_count, len(self.history))
-        save_history(self.current_world_path, self.history)
-        if self.current_world_path:
-            save_summary_cursor(self.current_world_path, self.covered_count)
-        self.refresh_chat_display()
-        self.update_context_indicator()
-
-    def start_dm_stream(self):
-        self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, f"\n{self.tr('hist.dm')} ", "dm")
-        self.stream_start_index = self.text_area.index("end-1c")
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
-    def append_to_dm_stream(self, chunk):
-        self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, chunk, "dm")
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
-    def abort_dm_stream(self):
-        """Убирает заголовок Мастера, если ответ не удалось получить."""
-        self.text_area.configure(state="normal")
-        if self.stream_start_index:
-            self.text_area.delete(self.stream_start_index, tk.END)
-            self.stream_start_index = None
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
-    def finalize_dm_stream(self, final_text):
-        self.text_area.configure(state="normal")
-        if self.stream_start_index:
-            self.text_area.delete(self.stream_start_index, tk.END)
-        self.text_area.insert(tk.END, f"{final_text}\n", "dm")
-        self.text_area.configure(state="disabled")
-        self.stream_start_index = None
-        self.text_area.see(tk.END)
-
-    def is_busy(self):
-        return (
-            self.processing or self.memory_indexing or self.summary_indexing or self.scene_prompt_running
-        )
-
-    def refresh_busy_state(self):
-        if self.processing:
-            status_text = self.tr("status.generating")
-            lock_input = True
-        elif self.summary_indexing and self.memory_indexing:
-            status_text = self.tr("status.summary_memory")
-            lock_input = False
-        elif self.summary_indexing:
-            status_text = self.tr("status.summary")
-            lock_input = False
-        elif self.memory_indexing:
-            status_text = self.tr("status.memory")
-            lock_input = False
-        elif self.scene_prompt_running:
-            status_text = self.tr("status.scene_prompt")
-            lock_input = False
-        else:
-            self.send_button.configure(
-                state="normal",
-                text=self.tr("btn.send"),
-                fg_color=COLORS["accent"],
-                hover_color=COLORS["button_hover"],
-                text_color="black",
-            )
-            self.input_field.configure(state="normal")
-            self.status_label.configure(text=self.tr("ready"), text_color=COLORS["player_color"])
-            self.input_field.focus()
-            return
-
-        # Во время генерации та же кнопка служит остановкой
-        self.send_button.configure(
-            state="normal",
-            text=self.tr("btn.stop"),
-            fg_color=COLORS["danger"],
-            hover_color=COLORS["danger_hover"],
-            text_color="white",
-        )
-        if lock_input:
-            self.input_field.configure(state="disabled")
-        else:
-            self.input_field.configure(state="normal")
-        self.status_label.configure(text=status_text, text_color=COLORS["system_color"])
-
-    def processing_end(self):
-        self.processing = False
-        self.refresh_busy_state()
-
-    def add_system_message(self, message):
-        self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, f"\n{message}\n", "system")
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
-    def add_player_message(self, message):
-        self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, f"\n🎮 {message}\n", "player")
-        self.text_area.configure(state="disabled")
-        self.text_area.see(tk.END)
-
-    def show_context_menu(self, event):
-        menu = tk.Menu(self.root, tearoff=0)
-        target = event.widget._textbox if hasattr(event.widget, "_textbox") else event.widget
-        menu.add_command(label=self.tr("menu.select_all"), command=lambda: self.select_all_text(target))
-        menu.add_command(label=self.tr("menu.copy"), command=lambda: self.copy_selected_text(target))
-        menu.add_command(label=self.tr("menu.paste"), command=lambda: target.event_generate("<<Paste>>"))
-        menu.add_command(label=self.tr("menu.cut"), command=lambda: target.event_generate("<<Cut>>"))
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
