@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dungeon.ai_engine import DeltaBatcher  # noqa: E402
 from dungeon.config import COLORS  # noqa: E402
-from dungeon.i18n import INTRO_PREFIX  # noqa: E402
+from dungeon.i18n import INTRO_PREFIX, t  # noqa: E402
 from dungeon.storage import (  # noqa: E402
     clamp_summary_cursor,
     clamp_summary_fill_percent,
@@ -23,7 +23,7 @@ from dungeon.tokens import (  # noqa: E402
     format_token_count,
     history_window_budget,
     summary_due,
-    take_unsummarized_prefix,
+    summary_needs_compression,
     unsummarized_token_count,
 )
 from tkhelpers import close_tk_window  # noqa: E402
@@ -102,29 +102,39 @@ def test_history_budget_matches_turn_window():
     print("OK  бюджет истории совпадает со сборкой хода")
 
 
-def test_summary_takes_oldest_uncovered_prefix():
-    history = ["раз", "два", "три", "четыре"]
-    costs = [count_tokens(msg) + 1 for msg in history]
-    whole = sum(costs)
-    chunk, nxt, skipped = take_unsummarized_prefix(history, 0, whole)
-    assert chunk == history and nxt == 4 and skipped == 0
+def test_summary_compress_note_starts_at_eighty_percent():
+    assert summary_needs_compression(799, 1000) is False
+    assert summary_needs_compression(800, 1000) is True
+    assert summary_needs_compression(0, 1000) is False
 
-    first_two = costs[0] + costs[1]
-    chunk, nxt, skipped = take_unsummarized_prefix(history, 0, first_two)
-    assert chunk == ["раз", "два"] and nxt == 2 and skipped == 0
+    import tempfile
+    from pathlib import Path
 
-    chunk, nxt, skipped = take_unsummarized_prefix(history, 2, costs[2])
-    assert chunk == ["три"] and nxt == 3 and skipped == 0
+    import customtkinter as ctk
 
-    huge = "слово " * 400
-    mixed = [huge, "коротко", "ещё"]
-    budget = count_tokens("коротко") + 1
-    chunk, nxt, skipped = take_unsummarized_prefix(mixed, 0, budget)
-    assert skipped == 1 and chunk == ["коротко"] and nxt == 2
+    from dungeon.app import DungeonApp
 
-    chunk, nxt, skipped = take_unsummarized_prefix(history, 1, 0)
-    assert chunk == [] and nxt == 1 and skipped == 0
-    print("OK  суммаризация берёт старый непокрытый кусок и не отмечает хвост")
+    ctk.set_appearance_mode("Dark")
+    root = ctk.CTk()
+    root.withdraw()
+    app = DungeonApp(root)
+    app.language = "ru"
+    app.context_size = 8000
+
+    with tempfile.TemporaryDirectory() as tmp:
+        world = Path(tmp)
+        app.current_world_path = world
+        (world / "summary.txt").write_text("коротко", encoding="utf-8")
+        *_rest, note = app._summary_history_budget()
+        assert note == ""
+
+        (world / "summary.txt").write_text("слово " * 2000, encoding="utf-8")
+        *_rest, note = app._summary_history_budget()
+        assert note == "\n\n" + t("ru", "prompt.summary_compress")
+        assert count_tokens((world / "summary.txt").read_text(encoding="utf-8")) >= 800
+
+    close_tk_window(app.root)
+    print("OK  большое краткое содержание просит сжатие")
 
 
 def test_unsummarized_tokens_start_at_cursor():
@@ -187,6 +197,7 @@ def test_context_indicator_shows_fill_since_summary():
     app.context_size = 8000
     app.max_tokens = 300
     app.summary_fill_percent = 80
+    app.summary_enabled = True
     app.memory_enabled = False
     app.story_cards = {"cards": []}
     app.memory_bank = {"last_indexed_turn": 0, "entries": []}
@@ -255,7 +266,7 @@ def test_summary_cursor_advances_on_success_and_undo_clamps():
         app.covered_count = 0
         # Пока саммари не записано, граница не двигается
         assert app.covered_count == 0
-        app._remember_summarized_history(2)
+        app._remember_summarized_history()
         assert app.covered_count == 2
         assert read_summary_cursor(world) == 2
 
@@ -279,12 +290,6 @@ def test_summary_cursor_advances_on_success_and_undo_clamps():
         app.sync_introduction_to_history("ещё раз")
         assert app.covered_count == 0
 
-        app.history = ["Игрок: а", "Мастер: б", "Игрок: в", "Мастер: г"]
-        app.covered_count = 0
-        app._remember_summarized_history(2)
-        assert app.covered_count == 2
-        assert read_summary_cursor(world) == 2
-
         app.history = ["Игрок: а", "Мастер: б"]
         app.covered_count = 2
         save_summary_cursor(world, 2)
@@ -302,10 +307,6 @@ def test_summary_cursor_advances_on_success_and_undo_clamps():
         app.covered_count = 3
         app.note_history_revised(1)
         assert app.covered_count == 1
-
-        app.context_size = 100
-        available, _, _ = app._summary_history_budget()
-        assert available < 800
 
         app.context_size = 400
         app.max_tokens = 300

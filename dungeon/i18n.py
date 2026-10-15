@@ -234,8 +234,6 @@ TRANSLATIONS = {
         "msg.scene_prompt_fail": "⚠️ Не удалось создать промпт сцены: {msg}",
         "msg.action_stopped": "⏹ Генерация остановлена. Ответ сохранён частично — его можно отредактировать или удалить.",
         "msg.summary_stopped": "⏹ Суммаризация остановлена.",
-        "msg.summary_skipped": "⚠️ {n} сообщ. длиннее окна суммаризации и не вошли в хронику.",
-        "msg.summary_no_room": "⚠️ В контекстном окне не осталось места, чтобы сжать новую историю.",
         "msg.memory_stopped": "⏹ Индексация памяти остановлена.",
         "msg.language_changed": "🌐 Язык интерфейса: {lang_name}",
         "world_file.introduction.txt": "Вступление",
@@ -285,6 +283,7 @@ TRANSLATIONS = {
 {history}
 
 Выдай только текст нового краткого содержания простым текстом без лишних *, вступлений и Markdown.""",
+        "prompt.summary_compress": "Краткое содержание слишком большое, сожми его: убери повторы и мелкие детали, оставь важное. Новый текст должен быть короче старого.",
         "prompt.card_desc_gen": """Ты помогаешь пользователю создать описание для карточки истории в текстовой RPG.
 
 Контекст мира:
@@ -579,8 +578,6 @@ TRANSLATIONS = {
         "msg.scene_prompt_fail": "⚠️ Could not create the scene prompt: {msg}",
         "msg.action_stopped": "⏹ Generation stopped. The partial reply was kept — you can edit or undo it.",
         "msg.summary_stopped": "⏹ Summarization stopped.",
-        "msg.summary_skipped": "⚠️ {n} message(s) are longer than the summary window and were left out of the chronicle.",
-        "msg.summary_no_room": "⚠️ The context window has no room left to compress the new story.",
         "msg.memory_stopped": "⏹ Memory indexing stopped.",
         "msg.language_changed": "🌐 Interface language: {lang_name}",
         "world_file.introduction.txt": "Introduction",
@@ -630,6 +627,7 @@ CURRENT GAME HISTORY:
 {history}
 
 Output only the new summary as plain text with no extra *, introductions, or Markdown.""",
+        "prompt.summary_compress": "The summary is too long, compress it: drop repetition and minor details, keep what matters. The new text must be shorter than the old one.",
         "prompt.card_desc_gen": """You are helping a user create a description for a story card in a text RPG.
 
 World context:
@@ -792,6 +790,7 @@ PROMPT_GROUPS = (
         "prompt_group.summary",
         (
             "prompt.summary",
+            "prompt.summary_compress",
             "prompt.summary_header",
             "prompt.none",
         ),

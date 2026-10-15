@@ -31,7 +31,7 @@ from .tokens import (
     count_tokens,
     history_window_budget,
     summary_due,
-    take_unsummarized_prefix,
+    summary_needs_compression,
     unsummarized_token_count,
 )
 
@@ -543,27 +543,38 @@ class AIEngineMixin:
         return used, budget, used / budget
 
     def _summary_history_budget(self):
-        """Сколько токенов истории реально влезает в промпт суммаризации, без искусственного пола."""
+        """Сколько токенов истории отдаём в промпт суммаризации.
+
+        Ниже 800 токенов свежий хвост уже нечем сжимать, поэтому окно
+        не опускается под этот пол и модель всё равно вызывается.
+        Если старое содержание занимает 80% лимита ответа, к промпту
+        добавляется просьба сжать его; она же учтена в бюджете истории.
+        """
         summary_path = self.current_world_path / "summary.txt"
         old_summary = (
             summary_path.read_text(encoding="utf-8").strip()
             if summary_path.exists()
             else t(self.language, "prompt.none")
         )
+        summary_max_tokens = 1000
+        compress_note = ""
+        if summary_needs_compression(count_tokens(old_summary), summary_max_tokens):
+            compress_note = "\n\n" + t(self.language, "prompt.summary_compress")
         prompt_template_base = t(
             self.language,
             "prompt.summary",
             old_summary=old_summary,
             history="",
-        )
-        summary_max_tokens = 1000
+        ) + compress_note
         safety_buffer = 400
         available = self.context_size - summary_max_tokens - count_tokens(prompt_template_base) - safety_buffer
-        return available, old_summary, summary_max_tokens
+        if available < 800:
+            available = 800
+        return available, old_summary, summary_max_tokens, compress_note
 
-    def _remember_summarized_history(self, next_covered):
-        """Отмечает покрытым только тот префикс истории, который реально сжали."""
-        self.covered_count = max(0, min(int(next_covered), len(self.history)))
+    def _remember_summarized_history(self):
+        """Отмечает всю текущую историю как вошедшую в summary.txt."""
+        self.covered_count = len(self.history)
         if self.current_world_path:
             save_summary_cursor(self.current_world_path, self.covered_count)
         self.root.after(0, self.update_context_indicator)
@@ -707,15 +718,9 @@ class AIEngineMixin:
             )
 
             _used, _budget, fill_ratio = self.context_fill_state()
-            self._schedule_summary_after_turn = False
-            if summary_due(fill_ratio, self.summary_fill_percent, self.summary_enabled):
-                available, _, _ = self._summary_history_budget()
-                _chunk, next_covered, _skipped = take_unsummarized_prefix(
-                    self.history, self.covered_count, available
-                )
-                # Не ставим задачу, если сжать нечего: иначе каждый ход
-                # снова вызывал бы модель и не сдвигал границу.
-                self._schedule_summary_after_turn = next_covered > self.covered_count
+            self._schedule_summary_after_turn = summary_due(
+                fill_ratio, self.summary_fill_percent, self.summary_enabled
+            )
             if self._schedule_summary_after_turn:
                 self.root.after(0, lambda: self.add_system_message(self.tr("msg.reviewing")))
 
@@ -764,31 +769,28 @@ class AIEngineMixin:
                 return
 
             summary_path = self.current_world_path / "summary.txt"
-            available_summary_history, old_summary, summary_max_tokens = self._summary_history_budget()
-            # Берём самый старый ещё не сжатый кусок. Если отметить покрытой
-            # всю историю, сообщения, которые в этот промпт не влезли, больше
-            # никогда не попадут в хронику.
-            chunk, next_covered, skipped = take_unsummarized_prefix(
-                self.history, self.covered_count, available_summary_history
+            available_summary_history, old_summary, summary_max_tokens, compress_note = (
+                self._summary_history_budget()
             )
-            if not chunk:
-                if next_covered > self.covered_count:
-                    self._remember_summarized_history(next_covered)
-                    self.root.after(
-                        0, lambda n=skipped: self.add_system_message(self.tr("msg.summary_skipped", n=n))
-                    )
-                else:
-                    self.root.after(0, lambda: self.add_system_message(self.tr("msg.summary_no_room")))
-                return
 
-            history_text = "\n".join(localize_history(self.language, chunk))
+            short_history = []
+            current_history_tokens = 0
+            for msg in reversed(self.history):
+                msg_tokens = count_tokens(msg) + 1
+                if current_history_tokens + msg_tokens <= available_summary_history:
+                    short_history.insert(0, msg)
+                    current_history_tokens += msg_tokens
+                else:
+                    break
+
+            history_text = "\n".join(localize_history(self.language, short_history))
 
             prompt = t(
                 self.language,
                 "prompt.summary",
                 old_summary=old_summary,
                 history=history_text,
-            )
+            ) + compress_note
 
             payload = self._api_payload(
                 messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
@@ -806,13 +808,9 @@ class AIEngineMixin:
 
             if new_summary:
                 atomic_write_text(summary_path, new_summary)
-                # Граница сдвигается только после целой записи и только до конца
-                # куска, который ушёл в промпт. Отмена и ошибка полосу не сбрасывают.
-                self._remember_summarized_history(next_covered)
-                if skipped:
-                    self.root.after(
-                        0, lambda n=skipped: self.add_system_message(self.tr("msg.summary_skipped", n=n))
-                    )
+                # Граница сдвигается только после целой записи. Отмена и ошибка
+                # полосу не сбрасывают.
+                self._remember_summarized_history()
                 self.root.after(
                     0, lambda: self.add_system_message(self.tr("msg.summary_ok"))
                 )
