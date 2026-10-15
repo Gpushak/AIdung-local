@@ -10,6 +10,7 @@ dist/
 # Сборка и релизы
 App_finale/
 *.zip
+versions/
 
 # Пользовательские данные
 worlds/
