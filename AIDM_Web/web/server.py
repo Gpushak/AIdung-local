@@ -1,0 +1,266 @@
+"""Локальный сервер веб-версии. Слушает только этот компьютер."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from web.netbind import default_route_ipv4, network_addresses
+from web.session import GameSession
+
+
+def _static_dir():
+    if getattr(sys, "frozen", False):
+        root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        for candidate in (root / "web" / "static", root / "static"):
+            if candidate.is_dir():
+                return candidate
+        return root / "web" / "static"
+    return Path(__file__).resolve().parent / "static"
+
+
+STATIC_DIR = _static_dir()
+WEB_PORT = 8765
+
+
+def local_ipv4s():
+    """Адрес Wi-Fi, через который компьютер выходит наружу."""
+    primary = default_route_ipv4()
+    if primary:
+        return [primary]
+    return network_addresses()["lan"][:1]
+
+
+def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1") -> FastAPI:
+    app = FastAPI(title="AIDM Web")
+    app.state.session = session or GameSession()
+    app.state.bind_host = bind_host
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    def game() -> GameSession:
+        return app.state.session
+
+    @app.get("/")
+    def index():
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/api/state")
+    def state(start: int | None = None):
+        return game().state_view(start)
+
+    @app.get("/api/history")
+    def history(before: int):
+        return game().history_page(before)
+
+    @app.get("/api/strings")
+    def strings():
+        return game().strings_view()
+
+    @app.get("/api/events")
+    async def events():
+        session_obj = game()
+        sub = session_obj.subscribe()
+
+        async def stream():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.to_thread(sub.get, True, 15)
+                    except Exception:
+                        yield ": ping\n\n"
+                        continue
+                    yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+            finally:
+                session_obj.unsubscribe(sub)
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.get("/api/worlds")
+    def worlds():
+        return {"worlds": game().state_view()["worlds"], "current": game().world_name}
+
+    @app.get("/api/worlds/template")
+    def world_template():
+        return game().world_template()
+
+    @app.post("/api/toggles/summary")
+    def toggle_summary():
+        return game().toggle_summary()
+
+    @app.post("/api/toggles/memory")
+    def toggle_memory():
+        return game().toggle_memory()
+
+    @app.post("/api/worlds")
+    def create_world(payload: dict):
+        try:
+            name = game().create_world(payload.get("name", ""), payload.get("files"), payload.get("cards"))
+        except ValueError:
+            raise HTTPException(400, "bad name")
+        except FileExistsError:
+            raise HTTPException(409, "exists")
+        return {"name": name, "state": game().state_view()}
+
+    @app.post("/api/worlds/open")
+    def open_world(payload: dict):
+        try:
+            game().load_world(payload.get("name", ""))
+        except FileNotFoundError:
+            raise HTTPException(404, "missing")
+        except Exception as exc:
+            raise HTTPException(409, str(exc))
+        return game().state_view()
+
+    @app.get("/api/worlds/{name}/export")
+    def export_world(name: str):
+        try:
+            payload, cleaned = game().export_world_bytes(name)
+        except FileNotFoundError:
+            raise HTTPException(404, "missing")
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        except ValueError:
+            raise HTTPException(400, "bad name")
+        filename = quote(f"{cleaned}.zip")
+        return Response(
+            payload,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=\"world.zip\"; filename*=UTF-8''{filename}"},
+        )
+
+    @app.post("/api/worlds/import")
+    async def import_world(request: Request, name: str = ""):
+        try:
+            imported = game().import_world_bytes(name, await request.body())
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        except FileExistsError:
+            raise HTTPException(409, "exists")
+        except ValueError:
+            raise HTTPException(400, "bad archive")
+        except Exception as exc:
+            raise HTTPException(409, str(exc))
+        return {"name": imported, "state": game().state_view()}
+
+    @app.delete("/api/worlds/{name}")
+    def delete_world(name: str):
+        if not game().delete_world(name):
+            raise HTTPException(404, "missing")
+        return game().state_view()
+
+    @app.post("/api/turn")
+    def turn(payload: dict):
+        started = game().submit_turn(payload.get("text", ""), payload.get("direction", ""))
+        if not started:
+            raise HTTPException(409, "busy or no world")
+        return {"ok": True}
+
+    @app.post("/api/stop")
+    def stop():
+        return {"stopped": game().stop()}
+
+    @app.post("/api/undo")
+    def undo():
+        if not game().undo():
+            raise HTTPException(409, "cannot undo")
+        return game().state_view()
+
+    @app.post("/api/regenerate")
+    def regenerate():
+        if not game().regenerate():
+            raise HTTPException(409, "cannot regenerate")
+        return {"ok": True}
+
+    @app.post("/api/history/{index}")
+    def edit_history(index: int, payload: dict):
+        if not game().edit_message(index, payload.get("text", "")):
+            raise HTTPException(409, "cannot edit")
+        return game().state_view()
+
+    @app.post("/api/summary")
+    def summary():
+        if not game().summarize():
+            raise HTTPException(409, "cannot summarize")
+        return {"ok": True}
+
+    @app.get("/api/files")
+    def files():
+        if not game().current_world_path:
+            raise HTTPException(409, "no world")
+        return game().world_files()
+
+    @app.put("/api/files/{name}")
+    def save_file(name: str, payload: dict):
+        if not game().save_world_file(name, payload.get("content", "")):
+            raise HTTPException(404, "unknown file")
+        return {"ok": True, "fill": game().fill_view()}
+
+    @app.get("/api/cards")
+    def cards():
+        return game().story_cards
+
+    @app.put("/api/cards")
+    def save_cards(payload: dict):
+        if not game().save_cards(payload):
+            raise HTTPException(409, "no world")
+        return game().story_cards
+
+    @app.post("/api/cards/describe")
+    def describe_card(payload: dict):
+        if not game().describe_card(payload.get("title", ""), payload.get("description", "")):
+            raise HTTPException(409, "busy or no world")
+        return {"ok": True}
+
+    @app.get("/api/memory")
+    def memory():
+        return game().memory_view()
+
+    @app.get("/api/network")
+    def network():
+        port = WEB_PORT
+        listening = app.state.bind_host
+        addresses = network_addresses()
+        return {
+            "lan_access": bool(game().lan_access),
+            "bind_mode": game().bind_mode,
+            "listening": listening,
+            "port": port,
+            "local_url": f"http://127.0.0.1:{port}",
+            "lan_urls": [f"http://{ip}:{port}" for ip in local_ipv4s()],
+            "tailscale_urls": [f"http://{ip}:{port}" for ip in addresses["tailscale"]],
+        }
+
+    @app.get("/api/settings")
+    def settings():
+        return game().settings_view()
+
+    @app.put("/api/settings")
+    def save_settings(payload: dict):
+        problems = game().apply_settings(payload)
+        if problems:
+            raise HTTPException(400, detail={"prompts": problems})
+        return game().settings_view()
+
+    @app.get("/api/prompt")
+    def last_prompt():
+        return {"prompt": game().prompt_view()}
+
+    @app.post("/api/scene")
+    def scene():
+        if not game().current_world_path or game().is_busy():
+            raise HTTPException(409, "busy or no world")
+        game().start_scene_prompt()
+        return {"ok": True}
+
+    @app.get("/api/scene")
+    def last_scene():
+        return {"scene": game().last_scene}
+
+    return app

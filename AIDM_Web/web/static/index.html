@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>AIDM</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <button type="button" id="menu-toggle" aria-expanded="false" data-i18n="btn.menu">Меню</button>
+    <div id="topbar-body">
+    <header>
+      <h1 data-i18n="app_title">AIDM</h1>
+      <select id="world-select"></select>
+      <button type="button" id="lang">RU</button>
+    </header>
+
+    <nav>
+      <button type="button" data-panel="worlds" data-i18n="btn.worlds">Миры</button>
+      <button type="button" data-panel="files" data-i18n="btn.world_files">Файлы</button>
+      <button type="button" data-panel="cards" data-i18n="btn.cards">Карточки</button>
+      <button type="button" data-panel="memory" data-i18n="btn.memory">Память</button>
+      <button type="button" data-panel="settings" data-i18n="btn.ai_settings">Настройки</button>
+      <button type="button" data-panel="prompt" data-i18n="btn.prompt">Промпт</button>
+      <button type="button" data-panel="scene" data-i18n="btn.scene_prompt">Сцена</button>
+      <button type="button" id="toggle-summary"></button>
+      <span id="summary-count"></span>
+      <button type="button" id="toggle-memory"></button>
+      <span id="memory-count"></span>
+    </nav>
+    </div>
+  </div>
+
+  <main>
+    <article id="log"></article>
+    <p id="notice" class="system" hidden></p>
+    <div id="bar-row">
+      <div id="bar" class="ok"><span></span></div>
+      <div id="bar-meta">
+        <p id="bar-label"></p>
+        <span id="status"></span>
+      </div>
+    </div>
+    <form id="composer">
+      <textarea id="action" rows="3"></textarea>
+      <div class="composer-actions">
+        <button type="button" id="act" data-i18n="btn.make_move">Сделать ход</button>
+        <button type="submit" id="send" data-i18n="btn.send">Отправить</button>
+        <button type="button" id="next" data-i18n="btn.next">Дальше?</button>
+        <button type="button" id="undo" data-i18n="btn.undo">Отмена</button>
+        <button type="button" id="reroll" data-i18n="btn.reroll">Ещё раз</button>
+        <button type="button" id="edit" data-i18n="btn.edit_last">Редактировать</button>
+        <button type="button" id="summarize" data-i18n="btn.summary">Саммари</button>
+      </div>
+    </form>
+  </main>
+
+  <dialog id="next-dialog">
+    <header>
+      <strong data-i18n="dialog.next_title">Дальше?</strong>
+      <button type="button" id="next-close" data-i18n="btn.close">Закрыть</button>
+    </header>
+    <form id="next-form">
+      <p id="next-hint" class="hint" data-i18n="dialog.next_hint"></p>
+      <p id="next-error" class="error"></p>
+      <textarea id="next-text" rows="6"></textarea>
+      <div class="row">
+        <button type="submit" class="primary" data-i18n="btn.send">Отправить</button>
+        <button type="button" id="next-cancel" data-i18n="btn.cancel_plain">Отмена</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="panel">
+    <header>
+      <strong id="panel-title"></strong>
+      <button type="button" id="panel-close" data-i18n="btn.close">Закрыть</button>
+    </header>
+    <div id="panel-body"></div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

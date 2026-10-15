@@ -8,6 +8,10 @@ A local Game Master for text-based role-playing games. The application works wit
 
 If you play in Russian, I recommend using Gemma 4 models. They are excellent at writing in Russian and offer a good size-to-quality ratio. I mainly use the 31B or 26B A4B models.
 
+## Web version
+
+A browser build for a phone on the same Wi-Fi or over Tailscale: [AIDM Web](AIDM_Web/README.md).
+
 ## Features
 
 - **Text RPG sessions** — describe your actions, and the AI responds as the Game Master

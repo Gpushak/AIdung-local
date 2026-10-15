@@ -1,0 +1,140 @@
+import json
+import re
+from pathlib import Path
+
+from .storage import CorruptedDataError, atomic_write_json, read_json_with_backup
+
+STORY_CARDS_FILE = "story_cards.json"
+
+
+from .i18n import default_story_cards as demo_story_cards, t
+
+
+def default_story_cards(lang="ru"):
+    return demo_story_cards(lang)
+
+
+def load_story_cards(world_path):
+    path = Path(world_path) / STORY_CARDS_FILE
+    try:
+        data, _ = read_json_with_backup(path, None)
+    except CorruptedDataError:
+        # Карточки редактируются вручную и могут быть восстановлены из бэкапа
+        # или созданы заново, поэтому здесь молчаливый откат допустим.
+        return migrate_from_characters_txt(world_path)
+    if isinstance(data, dict) and "cards" in data:
+        return data
+    return migrate_from_characters_txt(world_path)
+
+
+def save_story_cards(world_path, cards_data):
+    atomic_write_json(Path(world_path) / STORY_CARDS_FILE, cards_data)
+
+
+def migrate_from_characters_txt(world_path):
+    characters_path = world_path / "characters.txt"
+    if characters_path.exists():
+        content = characters_path.read_text(encoding="utf-8").strip()
+        if content:
+            return {
+                "cards": [
+                    {
+                        "id": "card_001",
+                        "title": "Персонажи (миграция)",
+                        "description": content,
+                        "triggers": [],
+                    }
+                ]
+            }
+    return default_story_cards()
+
+
+def next_card_id(cards):
+    max_num = 0
+    for card in cards:
+        match = re.search(r"card_(\d+)", card.get("id", ""))
+        if match:
+            max_num = max(max_num, int(match.group(1)))
+    return f"card_{max_num + 1:03d}"
+
+
+def parse_triggers(text):
+    if not text or not text.strip():
+        return []
+    parts = re.split(r"[,;\n]+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def format_triggers(triggers):
+    return ", ".join(triggers)
+
+
+def retrieve_relevant_cards(query, cards_data, top_k=5, min_score=1):
+    query_lower = query.lower()
+    query_words = set(re.findall(r"[\w\u0400-\u04ff]+", query_lower))
+    scored = []
+    always_include = []
+
+    for card in cards_data.get("cards", []):
+        triggers = card.get("triggers", [])
+        if not triggers:
+            always_include.append(card)
+            continue
+
+        score = 0
+        for trigger in triggers:
+            trigger_lower = trigger.lower()
+            if trigger_lower in query_lower:
+                score += 3
+            elif trigger_lower in query_words:
+                score += 2
+
+        if score >= min_score:
+            scored.append((score, card))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    matched = [card for _, card in scored[:top_k]]
+
+    # id может отсутствовать в ручном story_cards.json — не роняем из-за этого
+    seen_ids = {card.get("id") for card in matched}
+    for card in always_include:
+        if card.get("id") not in seen_ids:
+            matched.append(card)
+
+    return matched
+
+
+def description_text(value):
+    """Карточка иногда хранит описание объектом полей, а не строкой."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [description_text(item) for item in value]
+        return ", ".join(part for part in parts if part)
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            text = description_text(item)
+            if text:
+                lines.append(f"{key}: {text}")
+        return "\n".join(lines)
+    return str(value)
+
+
+def format_story_cards_block(cards, lang="ru"):
+    if not cards:
+        return ""
+    block = t(lang, "prompt.cards_header")
+    for card in cards:
+        triggers = format_triggers(card.get("triggers", []))
+        trigger_hint = (
+            t(lang, "prompt.card_triggers", triggers=triggers)
+            if triggers
+            else t(lang, "prompt.card_always")
+        )
+        block += f"[{card['title']}]{trigger_hint}\n{description_text(card.get('description', ''))}\n\n"
+    return block
