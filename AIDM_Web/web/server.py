@@ -40,6 +40,17 @@ def local_ipv4s():
 
 def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1") -> FastAPI:
     app = FastAPI(title="AIDM Web")
+
+    @app.middleware("http")
+    async def disable_http_cache(request, call_next):
+        # Телефон иначе запоминает первый кусок /api/state и показывает его
+        # вместо уже дописанного ответа.
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     app.state.session = session or GameSession()
     app.state.bind_host = bind_host
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -80,7 +91,11 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             finally:
                 session_obj.unsubscribe(sub)
 
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/worlds")
     def worlds():

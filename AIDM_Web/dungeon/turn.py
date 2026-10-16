@@ -6,11 +6,12 @@ from .api_stream import ACTION, DeltaBatcher
 from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
 from .storage import save_history
 from .text_utils import StreamThinkFilter, clean_dm_response, clean_stream_chunk
-from .tokens import count_tokens, history_window_budget, summary_due
+from .tokens import count_tokens, history_window_budget, reply_tokens, summary_due
 
 
 class TurnMixin:
     def process_action(self, user_input="", direction_hint=None):
+        self._last_api_usage = None
         try:
             if direction_hint:
                 direction_hint = direction_hint.strip()
@@ -136,7 +137,7 @@ class TurnMixin:
                 self.root.after(0, lambda: self.add_system_message(self.tr("msg.action_stopped")))
                 return
 
-            completion_tokens = count_tokens(final_narration)
+            completion_tokens = reply_tokens(getattr(self, "_last_api_usage", None), final_narration)
             total_tokens = prompt_tokens + completion_tokens
 
             self.root.after(0, self.update_context_indicator)

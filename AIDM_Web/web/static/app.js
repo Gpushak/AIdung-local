@@ -13,8 +13,10 @@ const panelTitle = document.querySelector("#panel-title");
 let strings = {};
 let state = null;
 let drafting = false;
+let revision = 0;
 let settingsCache = null;
 let loadingOlder = false;
+let pollTimer = 0;
 
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
@@ -52,7 +54,10 @@ function applyStrings() {
 }
 
 async function api(path, options) {
-  const response = await fetch(path, options);
+  const opts = { cache: "no-store", ...(options || {}) };
+  const method = (opts.method || "GET").toUpperCase();
+  const url = method === "GET" ? path + (path.includes("?") ? "&" : "?") + "_=" + Date.now() : path;
+  const response = await fetch(url, opts);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(response.statusText);
@@ -100,6 +105,7 @@ function paintStatus(status) {
   sendEl.textContent = stop ? t("btn.stop") : t("btn.send");
   actionEl.disabled = status.text === t("status.generating");
   fitChrome();
+  syncPolling();
 }
 
 let tailReady = false;
@@ -118,8 +124,14 @@ function nearBottom() {
   return document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 180;
 }
 
-function renderLog(mode = "end") {
+function renderLog(mode = "end", draftOverride) {
   if (!state) return;
+  const fromDom = document.querySelector("#draft")?.textContent || "";
+  const fromState = state && typeof state.draft === "string" ? state.draft : "";
+  const draftText = drafting
+    ? (typeof draftOverride === "string" ? draftOverride : (fromState.length >= fromDom.length ? fromState : fromDom))
+    : "";
+  const stick = mode === "end" || (mode === "follow" && nearBottom());
   const anchorY = window.scrollY;
   const anchorHeight = document.documentElement.scrollHeight;
   logEl.replaceChildren();
@@ -146,14 +158,26 @@ function renderLog(mode = "end") {
     const p = document.createElement("p");
     p.className = "dm draft";
     p.id = "draft";
+    p.textContent = draftText;
     logEl.appendChild(p);
   }
   if (mode === "keep") {
     const grown = document.documentElement.scrollHeight - anchorHeight;
     window.scrollTo(0, anchorY + grown);
-  } else {
+  } else if (stick) {
     jumpToEnd();
   }
+}
+
+function ensureDraft() {
+  let draft = document.querySelector("#draft");
+  if (draft) return draft;
+  drafting = true;
+  draft = document.createElement("p");
+  draft.className = "dm draft";
+  draft.id = "draft";
+  logEl.appendChild(draft);
+  return draft;
 }
 
 async function loadOlder() {
@@ -188,15 +212,130 @@ function paintWorlds() {
   }
 }
 
+function applySnapshot(snap, mode = "end") {
+  if (!snap) return;
+  if (typeof snap.rev === "number" && snap.rev < revision) return;
+  const domDraft = document.querySelector("#draft")?.textContent || "";
+  const serverDraft = snap.draft || "";
+  const draftDrift = Boolean(snap.streaming) && domDraft !== serverDraft;
+  const unchanged = !draftDrift
+    && state
+    && snap.rev === revision
+    && serverDraft === (state.draft || "")
+    && Boolean(snap.streaming) === Boolean(state.streaming)
+    && snap.history_total === state.history_total
+    && snap.status?.text === state.status?.text
+    && (snap.notices || []).at(-1) === (state.notices || []).at(-1);
+  if (typeof snap.rev === "number") revision = snap.rev;
+  state = snap;
+  drafting = Boolean(snap.streaming);
+  paintWorlds();
+  paintFill(snap.fill);
+  paintStatus(snap.status);
+  paintNotice((snap.notices || []).at(-1) || "");
+  paintMeters(snap.meters);
+  if (mode === "end" || !unchanged) renderLog(mode);
+}
+
 async function refresh(mode = "end") {
   const start = mode === "keep" && state && Number.isInteger(state.history_from) ? `?start=${state.history_from}` : "";
-  state = await api(`/api/state${start}`);
-  paintWorlds();
-  paintFill(state.fill);
-  paintStatus(state.status);
-  paintNotice((state.notices || []).at(-1) || "");
-  paintMeters(state.meters);
-  renderLog(mode);
+  applySnapshot(await api(`/api/state${start}`), mode);
+}
+
+function syncPolling() {
+  const busy = document.body.classList.contains("busy");
+  if (busy) {
+    if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow"), 2000);
+  } else if (pollTimer) {
+    window.clearInterval(pollTimer);
+    pollTimer = 0;
+  }
+}
+
+function catchUp(mode = "end") {
+  if (document.visibilityState === "hidden") return;
+  refresh(mode).catch(() => {});
+}
+
+let source = null;
+let leftPage = false;
+let resumeTimers = [];
+
+function connectEvents() {
+  if (source) {
+    source.onopen = null;
+    source.onmessage = null;
+    source.onerror = null;
+    source.close();
+  }
+  source = new EventSource("/api/events?_=" + Date.now());
+  source.onopen = () => catchUp("follow");
+  source.onerror = () => {
+    const now = Date.now();
+    if (now - (connectEvents.lastError || 0) < 1500) return;
+    connectEvents.lastError = now;
+    catchUp("follow");
+  };
+  source.onmessage = (message) => {
+    let event;
+    try {
+      event = JSON.parse(message.data);
+    } catch (error) {
+      return;
+    }
+    if (typeof event.rev === "number" && event.rev < revision) return;
+    if (typeof event.rev === "number") revision = event.rev;
+    if (event.kind === "dm_start") {
+      drafting = true;
+      if (state) state.streaming = true;
+      renderLog("end");
+    } else if (event.kind === "dm_delta") {
+      const follow = nearBottom();
+      const draft = ensureDraft();
+      const next = typeof event.full === "string" ? event.full : `${draft.textContent}${event.text || ""}`;
+      if (next.length >= draft.textContent.length) {
+        draft.textContent = next;
+        if (state) {
+          state.streaming = true;
+          state.draft = next;
+        }
+      }
+      if (follow) jumpToEnd();
+    } else if (event.kind === "fill") {
+      paintFill(event);
+    } else if (event.kind === "meters") {
+      paintMeters(event);
+    } else if (event.kind === "system") {
+      paintNotice(event.text || "");
+      if (state) state.notices = [event.text || ""];
+    } else if (event.kind === "status") {
+      paintStatus(event);
+      if (state && state.status) {
+        state.status = { ...state.status, ...event };
+      }
+    } else if (event.kind === "scene") {
+      openPanel("scene", event);
+    } else if (event.kind === "card_desc") {
+      const box = document.querySelector("#card-desc");
+      if (box) box.value = event.text;
+    } else if (event.kind === "dm_done" || event.kind === "dm_abort") {
+      drafting = false;
+      if (state) {
+        state.streaming = false;
+        state.draft = "";
+      }
+      refresh("end");
+    } else if (event.kind === "history") {
+      refresh("end");
+    }
+  };
+}
+
+function onResume() {
+  resumeTimers.forEach((id) => clearTimeout(id));
+  connectEvents();
+  resumeTimers = [0, 600, 1800, 4000].map((delay) => window.setTimeout(() => catchUp("end"), delay));
+  syncPolling();
 }
 
 async function boot() {
@@ -205,35 +344,22 @@ async function boot() {
   document.querySelector("#lang").textContent = "…";
   await refresh();
   document.querySelector("#lang").textContent = (state.language || "ru").toUpperCase();
-  const source = new EventSource("/api/events");
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data);
-    if (event.kind === "dm_start") {
-      drafting = true;
-      renderLog("end");
-    } else if (event.kind === "dm_delta") {
-      const draft = document.querySelector("#draft");
-      const follow = nearBottom();
-      if (draft) draft.textContent += event.text;
-      if (follow) jumpToEnd();
-    } else if (event.kind === "fill") {
-      paintFill(event);
-    } else if (event.kind === "meters") {
-      paintMeters(event);
-    } else if (event.kind === "system") {
-      paintNotice(event.text || "");
-    } else if (event.kind === "status") {
-      paintStatus(event);
-    } else if (event.kind === "scene") {
-      openPanel("scene", event);
-    } else if (event.kind === "card_desc") {
-      const box = document.querySelector("#card-desc");
-      if (box) box.value = event.text;
-    } else if (event.kind === "dm_done" || event.kind === "dm_abort" || event.kind === "history") {
-      drafting = false;
-      refresh("end");
+  connectEvents();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      leftPage = true;
+      return;
     }
-  };
+    if (leftPage) {
+      leftPage = false;
+      onResume();
+    }
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) onResume();
+  });
+  document.addEventListener("resume", () => onResume());
+  window.addEventListener("online", () => onResume());
 }
 
 const nextDialog = document.querySelector("#next-dialog");
@@ -248,6 +374,25 @@ document.querySelector("#next").addEventListener("click", () => {
 });
 document.querySelector("#next-close").addEventListener("click", () => nextDialog.close());
 document.querySelector("#next-cancel").addEventListener("click", () => nextDialog.close());
+function showPlayerLine(text) {
+  if (!text || !state) return;
+  const last = state.history.at(-1);
+  if (last && last.kind === "player" && last.text === text) return;
+  const index = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
+  state.history.push({ index, kind: "player", text });
+  if (Number.isInteger(state.history_total)) state.history_total += 1;
+  renderLog("end");
+}
+
+function retractPlayerLine(text) {
+  if (!text || !state) return;
+  const last = state.history.at(-1);
+  if (!last || last.kind !== "player" || last.text !== text) return;
+  state.history.pop();
+  if (Number.isInteger(state.history_total)) state.history_total -= 1;
+  renderLog("end");
+}
+
 document.querySelector("#next-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const direction = nextText.value.trim();
@@ -256,6 +401,7 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
     return;
   }
   nextError.textContent = "";
+  showPlayerLine(direction);
   try {
     await api("/api/turn", {
       method: "POST",
@@ -264,6 +410,7 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
     });
     nextDialog.close();
   } catch (error) {
+    retractPlayerLine(direction);
     nextText.value = direction;
   }
 });
@@ -276,11 +423,13 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
   }
   const text = actionEl.value.trim();
   actionEl.value = "";
+  if (text) showPlayerLine(text);
   try {
     await api("/api/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     document.body.classList.remove("writing");
     fitChrome();
   } catch (error) {
+    retractPlayerLine(text);
     actionEl.value = text;
   }
 });

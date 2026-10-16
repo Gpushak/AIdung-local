@@ -108,6 +108,19 @@ def count_tokens(text: str) -> int:
     return _heuristic_count(text)
 
 
+def reply_tokens(usage, text: str) -> int:
+    """Число токенов ответа для строки статуса.
+
+    Локальная оценка завышает кириллицу относительно токенизатора модели,
+    поэтому при наличии usage.completion_tokens показываем счёт сервера.
+    """
+    if isinstance(usage, dict):
+        reported = usage.get("completion_tokens")
+        if type(reported) is int and reported >= 0:
+            return reported
+    return count_tokens(text)
+
+
 def format_token_count(n: int) -> str:
     """Компактная запись для интерфейса: 843 -> «843», 16384 -> «16.4k»."""
     n = int(n)

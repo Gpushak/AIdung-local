@@ -280,6 +280,182 @@ def test_world_export_and_import():
     print("OK  мир выгружается в zip и поднимается из архива без настроек и чужих путей")
 
 
+def test_player_line_is_visible_before_the_reply():
+    import tempfile
+    import threading
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        release = threading.Event()
+
+        def blocking_read(_response, key, on_delta=None):
+            while not release.is_set() and not session.is_cancelled(key):
+                time.sleep(0.02)
+            return "Готово", False
+
+        session._api_post = lambda payload, **kwargs: _Response()
+        session._read_response = blocking_read
+        assert client.post("/api/turn", json={"text": "осмотреться"}).status_code == 200
+        state = client.get("/api/state").json()
+        player = [row for row in state["history"] if row["kind"] == "player"]
+        assert player and player[-1]["text"] == "осмотреться"
+        assert all(row["kind"] != "dm" for row in state["history"])
+        assert state["status"]["busy"] is True
+        release.set()
+        deadline = time.time() + 3
+        while time.time() < deadline and client.get("/api/state").json()["status"]["busy"]:
+            time.sleep(0.05)
+        done = client.get("/api/state").json()
+        assert done["status"]["busy"] is False
+        assert sum(1 for row in done["history"] if row["text"] == "осмотреться") == 1
+        assert any(row["kind"] == "dm" and "Готово" in row["text"] for row in done["history"])
+    print("OK  реплика игрока есть в ленте до окончания ответа и не дублируется")
+
+
+def test_reply_tokens_follow_model_usage():
+    import tempfile
+
+    from dungeon.api_stream import _iter_response_deltas
+    from dungeon.tokens import count_tokens, reply_tokens
+
+    narration = "Темный коридор тянется дальше. " * 40
+    assert count_tokens(narration) > 40
+    assert reply_tokens({"completion_tokens": 19}, narration) == 19
+    assert reply_tokens({"completion_tokens": True}, narration) == count_tokens(narration)
+    assert reply_tokens(None, narration) == count_tokens(narration)
+
+    class _Chunks:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def iter_content(self, chunk_size=None):
+            yield from self._chunks
+
+    usage = {}
+    pieces = "".join(
+        _iter_response_deltas(
+            _Chunks(
+                [
+                    'data: {"choices":[{"delta":{"content":"Раз"}}]}\n'.encode(),
+                    'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":19,"total_tokens":27}}\n'.encode(),
+                    b"data: [DONE]\n",
+                ]
+            ),
+            usage,
+        )
+    )
+    assert pieces == "Раз"
+    assert usage["completion_tokens"] == 19
+
+    plain = {}
+    body = '{"choices":[{"message":{"content":"Два"}}],"usage":{"completion_tokens":2}}'.encode()
+    assert "".join(_iter_response_deltas(_Chunks([body]), plain)) == "Два"
+    assert plain["completion_tokens"] == 2
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        assert client.put(
+            "/api/settings",
+            json={"summary_enabled": False, "memory_enabled": False},
+        ).status_code == 200
+        seen = {}
+
+        def finish_read(_response, _key, on_delta=None):
+            session._last_api_usage = {"prompt_tokens": 8, "completion_tokens": 19}
+            if on_delta:
+                on_delta(narration)
+            return narration, False
+
+        def capture(payload, **kwargs):
+            seen["stream_options"] = payload.get("stream_options")
+            return _Response()
+
+        session._api_post = capture
+        session._read_response = finish_read
+        assert client.post("/api/turn", json={"text": "осмотреться"}).status_code == 200
+        deadline = time.time() + 3
+        notice = ""
+        while time.time() < deadline:
+            state = client.get("/api/state").json()
+            notice = (state["notices"] or [""])[-1]
+            if "Ответ: 19" in notice and not state["status"]["busy"]:
+                break
+            time.sleep(0.05)
+        assert "Ответ: 19" in notice
+        assert f"Ответ: {count_tokens(narration)}" not in notice
+        assert seen["stream_options"] == {"include_usage": True}
+    print("OK  строка «Ответ» берёт completion_tokens модели, а не локальную оценку")
+
+
+def test_resume_sees_partial_reply_and_finished_jobs():
+    import tempfile
+
+    from dungeon.i18n import DM_PREFIX
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        session.processing = True
+        session.start_dm_stream()
+        session.append_to_dm_stream("Первая ")
+        session.append_to_dm_stream("часть")
+        live = client.get("/api/state").json()
+        assert live["streaming"] is True
+        assert live["draft"] == "Первая часть"
+        assert live["status"]["busy"] is True
+        assert live["status"]["text"] == "Генерация..."
+        assert live["rev"] >= 1
+        session.history.append(f"{DM_PREFIX} Первая часть")
+        session.finalize_dm_stream("Первая часть")
+        session.processing = False
+        session.summary_indexing = True
+        summary = client.get("/api/state").json()
+        assert summary["draft"] == ""
+        assert summary["streaming"] is False
+        assert summary["status"]["text"] == "Суммаризация..."
+        assert any(row["kind"] == "dm" and row["text"] == "Первая часть" for row in summary["history"])
+        session.summary_indexing = False
+        session.memory_indexing = True
+        assert client.get("/api/state").json()["status"]["text"] == "Индексация памяти..."
+        session.memory_indexing = False
+        done = client.get("/api/state").json()
+        assert done["status"]["busy"] is False
+        assert done["status"]["text"] == "Готов"
+    print("OK  снимок состояния хранит недописанный ответ и статус фона")
+
+
+def test_state_is_not_cached():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        client = TestClient(create_app())
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        response = client.get("/api/state")
+        assert response.status_code == 200
+        cache = response.headers.get("cache-control", "")
+        assert "no-store" in cache
+        page = client.get("/")
+        assert "no-store" in page.headers.get("cache-control", "")
+        assert "app.js?v=3" in page.text
+    print("OK  страница и состояние не кэшируются браузером телефона")
+
+
 def test_bind_modes():
     from web.netbind import host_for_mode, is_tailscale_ip, saved_mode, share_urls, split_addresses
 
@@ -309,6 +485,10 @@ if __name__ == "__main__":
     test_history_opens_on_the_tail()
     test_turn_and_stop()
     test_direction_turn()
+    test_player_line_is_visible_before_the_reply()
+    test_reply_tokens_follow_model_usage()
+    test_resume_sees_partial_reply_and_finished_jobs()
+    test_state_is_not_cached()
     test_lan_setting_roundtrip()
     test_world_export_and_import()
     test_bind_modes()

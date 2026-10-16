@@ -187,6 +187,8 @@ class GameSession(AIEngineMixin):
         self.memory_bank = {"last_indexed_turn": 0, "entries": []}
         self.story_cards = {"cards": []}
         self.processing = False
+        self.draft_text = ""
+        self.revision = 0
         self.stream_start_index = None
         self.last_sent_prompt = None
         self.memory_indexing = False
@@ -203,7 +205,8 @@ class GameSession(AIEngineMixin):
         return t(self.language, key, **kwargs)
 
     def emit(self, kind, **data):
-        event = {"kind": kind, **data}
+        self.revision += 1
+        event = {"kind": kind, "rev": self.revision, **data}
         with self._sub_lock:
             subs = list(self._subscribers)
         for sub in subs:
@@ -237,15 +240,19 @@ class GameSession(AIEngineMixin):
         self.emit("history")
 
     def start_dm_stream(self):
+        self.draft_text = ""
         self.emit("dm_start")
 
     def append_to_dm_stream(self, chunk):
-        self.emit("dm_delta", text=chunk)
+        self.draft_text += chunk
+        self.emit("dm_delta", text=chunk, full=self.draft_text)
 
     def abort_dm_stream(self):
+        self.draft_text = ""
         self.emit("dm_abort")
 
     def finalize_dm_stream(self, final_text):
+        self.draft_text = ""
         self.emit("dm_done", text=final_text)
         self.emit("history")
 
@@ -382,6 +389,9 @@ class GameSession(AIEngineMixin):
             "history_from": start,
             "history_total": total,
             "notices": list(self.notices),
+            "rev": self.revision,
+            "streaming": bool(self.processing),
+            "draft": self.draft_text if self.processing else "",
             "fill": self.fill_view(),
             "status": self.status_view(),
             "memory": self.memory_view(),
@@ -722,6 +732,7 @@ class GameSession(AIEngineMixin):
 
     def begin_action_turn(self):
         self.notices = []
+        self.draft_text = ""
         self.emit("system", text="")
         self.processing = True
         self._begin_operation(ACTION)
@@ -735,13 +746,30 @@ class GameSession(AIEngineMixin):
         self.begin_action_turn()
         threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
 
+    def _stage_player_line(self, text):
+        """Кладёт реплику игрока в ленту до запроса к модели."""
+        text = (text or "").strip()
+        if not text:
+            return
+        line = f"{PLAYER_PREFIX} {text}"
+        if self.history and self.history[-1] == line:
+            return
+        self.history.append(line)
+        if self.current_world_path:
+            save_history(self.current_world_path, self.history)
+        self.emit("history")
+
     def submit_turn(self, text="", direction=""):
         if self.is_busy() or not self.current_world_path:
             return False
         if direction:
+            direction = direction.strip()
+            self._stage_player_line(direction)
             self._dispatch_turn(self.process_action, ("",), {"direction_hint": direction})
         else:
-            self._dispatch_turn(self.process_action, (text or "",))
+            text = (text or "").strip()
+            self._stage_player_line(text)
+            self._dispatch_turn(self.process_action, (text,))
         return True
 
     def stop(self):
