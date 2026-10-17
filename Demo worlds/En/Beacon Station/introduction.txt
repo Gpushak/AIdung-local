@@ -1,0 +1,7 @@
+You are the junior technician on Beacon Station, and the shift has just started. A quiet garden moon hangs beyond the viewport: green terraces, a ring of cloud, and not a single city.
+
+The station is small. Six people, a greenhouse, a dock for barges, and an old beacon that tells supply ships where to moor. Captain Ida is already at the greenhouse glass, looking at the tomatoes. Reflections of the beacon burn in a perfect circle on the pane, though the beam itself should point outward, toward the dock.
+
+Over the intercom, mechanic Pyotr speaks as calmly as if he were asking for a wrench:
+
+"The beacon answered someone. The circle is even. Not a fault. Ida wants you to read the signal log before I climb into the antenna. The log, or do you come with me?"

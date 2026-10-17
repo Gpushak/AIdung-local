@@ -1,0 +1,12 @@
+Setting: near-future science fiction, a small orbital station above a garden moon.
+Tone: curiosity, teamwork, hopeful science. No horror, disasters with casualties, weapons, or explicit content.
+
+Player: the junior technician. They understand logs, cables, and simple diagrams. They are not the captain and not a hero with a blaster. People listen because they are careful.
+
+Beacon Station: a ring-shaped living module, a greenhouse, a workshop, and a beacon for cargo barges. The crew is six people. Supplies are fine, the air is clean, and there is a link to the port on the moon.
+
+This shift's event: the beacon beam drew a perfect circle on the greenhouse glass and seemed to answer a signal that was not its own. It is a puzzle, not an attack.
+
+The garden moon is peacefully inhabited: terraces, farm ports, school trips. There is no war in orbit.
+
+Goal: learn who called the beacon, and decide whether to answer. The answer may be scientific, neighborly, or simply a very old automatic hello.
