@@ -41,7 +41,7 @@ from dungeon.memory import (
     sync_memory_bank_after_undo,
 )
 from dungeon.story_cards import default_story_cards, load_story_cards, save_story_cards
-from dungeon.tokens import format_token_count
+from dungeon.tokens import format_token_count, model_token_scale, set_model_token_scale
 from dungeon.storage import (
     CorruptedDataError,
     atomic_write_text,
@@ -164,6 +164,11 @@ class GameSession(AIEngineMixin):
         self.api_url = settings["api_url"]
         self.api_key = settings.get("api_key", "")
         self.model = settings.get("model", "")
+        saved_scale_model = str(settings.get("token_scale_model") or "")
+        if saved_scale_model == str(self.model or ""):
+            set_model_token_scale(settings.get("token_scale", 1.0))
+        else:
+            set_model_token_scale(1.0)
         self.active_api_preset = settings.get("active_api_preset", "")
         self.api_presets = settings.get("api_presets", [])
         self.temperature = settings["temperature"]
@@ -521,6 +526,8 @@ class GameSession(AIEngineMixin):
                 "prompt_overrides": self.prompt_overrides,
                 "lan_access": self.lan_access,
                 "bind_mode": self.bind_mode,
+                "token_scale": model_token_scale(),
+                "token_scale_model": self.model,
             }
         )
 
@@ -589,7 +596,10 @@ class GameSession(AIEngineMixin):
         self.language = language
         self.api_url = str(payload.get("api_url", self.api_url) or "")
         self.api_key = str(payload.get("api_key", self.api_key) or "")
+        previous_model = self.model
         self.model = str(payload.get("model", self.model) or "")
+        if self.model != previous_model:
+            set_model_token_scale(1.0)
         self.active_api_preset = str(payload.get("active_api_preset", self.active_api_preset) or "")
         self.api_presets = normalize_api_presets(payload.get("api_presets", self.api_presets))
         self.temperature = float(payload.get("temperature", self.temperature))

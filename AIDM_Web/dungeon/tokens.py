@@ -84,12 +84,8 @@ def _heuristic_count(text: str) -> int:
     return max(1, int(total))
 
 
-def count_tokens(text: str) -> int:
-    """Оценка числа токенов в тексте.
-
-    Возвращает консервативную (не заниженную) оценку, пригодную
-    для бюджетирования контекстного окна LLM.
-    """
+def raw_count_tokens(text: str) -> int:
+    """Оценка токенизатором приложения, без подстройки под модель."""
     if not text:
         return 0
 
@@ -106,6 +102,93 @@ def count_tokens(text: str) -> int:
         return n
 
     return _heuristic_count(text)
+
+
+# Во сколько раз токенизатор модели отличается от локальной оценки.
+# 1.0 — ещё не с чем сравнивать. После ответа API масштаб становится
+# prompt_tokens / локальная оценка того же промпта.
+_MODEL_SCALE = 1.0
+_SCALE_OBSERVED = False
+_SCALE_MIN = 0.4
+_SCALE_MAX = 1.5
+
+
+def model_token_scale() -> float:
+    return _MODEL_SCALE
+
+
+def set_model_token_scale(scale: float) -> None:
+    """Ставит масштаб вручную. 1.0 снова считает локальную оценку точной."""
+    global _MODEL_SCALE, _SCALE_OBSERVED
+    try:
+        value = float(scale)
+    except (TypeError, ValueError):
+        value = 1.0
+    if value <= 0:
+        value = 1.0
+    _MODEL_SCALE = min(_SCALE_MAX, max(_SCALE_MIN, value))
+    _SCALE_OBSERVED = abs(_MODEL_SCALE - 1.0) > 0.001
+
+
+def scale_token_count(raw: int) -> int:
+    if raw <= 0 or _MODEL_SCALE == 1.0:
+        return max(0, int(raw))
+    return max(1, int(int(raw) * _MODEL_SCALE))
+
+
+def count_tokens(text: str) -> int:
+    """Число токенов для окна контекста.
+
+    Пока модель не прислала свой счёт, это локальная оценка. После первого
+    достаточно длинного промпта оценка умножается на её масштаб, иначе
+    кириллица забивает полосу раньше, чем окно модели.
+    """
+    return scale_token_count(raw_count_tokens(text))
+
+
+def _stable_prompt_ratio(ratio: float) -> float:
+    # Небольшой запас, когда локальный счётчик крупнее модели: иначе следующий
+    # ход может вылезти за окно из-за шаблона чата.
+    if ratio < 1.0:
+        ratio = min(1.0, ratio * 1.05)
+    return min(_SCALE_MAX, max(_SCALE_MIN, ratio))
+
+
+def observe_model_prompt(raw_tokens, usage) -> bool:
+    """Учит масштаб по prompt_tokens ответа. True, если масштаб заметно сдвинулся.
+
+    Короткий промпт не используем: на нём накладные токены шаблона чата
+    сильнее самого текста и портят масштаб.
+    """
+    global _MODEL_SCALE, _SCALE_OBSERVED
+    if not isinstance(usage, dict):
+        return False
+    reported = usage.get("prompt_tokens")
+    if type(reported) is not int or reported <= 0:
+        return False
+    try:
+        raw = int(raw_tokens)
+    except (TypeError, ValueError):
+        return False
+    if raw < 1000:
+        return False
+    old = _MODEL_SCALE
+    ratio = _stable_prompt_ratio(reported / raw)
+    if not _SCALE_OBSERVED:
+        _MODEL_SCALE = ratio
+        _SCALE_OBSERVED = True
+    else:
+        _MODEL_SCALE = min(_SCALE_MAX, max(_SCALE_MIN, old * 0.5 + ratio * 0.5))
+    return abs(_MODEL_SCALE - old) >= 0.02
+
+
+def prompt_token_count(usage, raw_tokens: int) -> int:
+    """Контекст в строке статуса: счёт модели, если она его прислала."""
+    if isinstance(usage, dict):
+        reported = usage.get("prompt_tokens")
+        if type(reported) is int and reported >= 0:
+            return reported
+    return scale_token_count(raw_tokens)
 
 
 def reply_tokens(usage, text: str) -> int:

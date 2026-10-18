@@ -6,7 +6,16 @@ from .api_stream import ACTION, DeltaBatcher
 from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
 from .storage import save_history
 from .text_utils import StreamThinkFilter, clean_dm_response, clean_stream_chunk
-from .tokens import count_tokens, history_window_budget, reply_tokens, summary_due
+from .tokens import (
+    count_tokens,
+    history_window_budget,
+    observe_model_prompt,
+    prompt_token_count,
+    raw_count_tokens,
+    reply_tokens,
+    scale_token_count,
+    summary_due,
+)
 
 
 class TurnMixin:
@@ -52,7 +61,8 @@ class TurnMixin:
 
             history_text = "\n".join(localize_history(self.language, short_history))
             system_final_content = f"""{context}\n{t(self.language, 'prompt.history_header')}\n{history_text}"""
-            prompt_tokens = count_tokens(system_final_content) + count_tokens(user_content)
+            raw_prompt = raw_count_tokens(system_final_content) + raw_count_tokens(user_content)
+            prompt_tokens = scale_token_count(raw_prompt)
 
             self.last_sent_prompt = {
                 "system": system_final_content,
@@ -137,7 +147,13 @@ class TurnMixin:
                 self.root.after(0, lambda: self.add_system_message(self.tr("msg.action_stopped")))
                 return
 
-            completion_tokens = reply_tokens(getattr(self, "_last_api_usage", None), final_narration)
+            usage = getattr(self, "_last_api_usage", None)
+            if observe_model_prompt(raw_prompt, usage) and hasattr(self, "save_settings"):
+                self.save_settings()
+            prompt_tokens = prompt_token_count(usage, raw_prompt)
+            if isinstance(self.last_sent_prompt, dict):
+                self.last_sent_prompt["tokens"] = prompt_tokens
+            completion_tokens = reply_tokens(usage, final_narration)
             total_tokens = prompt_tokens + completion_tokens
 
             self.root.after(0, self.update_context_indicator)

@@ -456,6 +456,34 @@ def test_state_is_not_cached():
     print("OK  страница и состояние не кэшируются браузером телефона")
 
 
+def test_context_scale_follows_model_prompt():
+    from dungeon.tokens import (
+        count_tokens,
+        model_token_scale,
+        observe_model_prompt,
+        prompt_token_count,
+        raw_count_tokens,
+        set_model_token_scale,
+    )
+
+    text = "Темный коридор тянется дальше. " * 80
+    set_model_token_scale(1.0)
+    try:
+        raw = raw_count_tokens(text)
+        assert count_tokens(text) == raw
+        assert observe_model_prompt(500, {"prompt_tokens": 100}) is False
+        assert model_token_scale() == 1.0
+        assert observe_model_prompt(16000, {"prompt_tokens": 12000}) is True
+        scale = model_token_scale()
+        assert 0.75 <= scale <= 0.85
+        assert count_tokens(text) < raw
+        assert prompt_token_count({"prompt_tokens": 12000}, 16000) == 12000
+        assert observe_model_prompt(16000, {"prompt_tokens": True}) is False
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  шкала контекста сжимает локальный счёт до prompt_tokens модели")
+
+
 def test_bind_modes():
     from web.netbind import host_for_mode, is_tailscale_ip, saved_mode, share_urls, split_addresses
 
@@ -489,6 +517,7 @@ if __name__ == "__main__":
     test_reply_tokens_follow_model_usage()
     test_resume_sees_partial_reply_and_finished_jobs()
     test_state_is_not_cached()
+    test_context_scale_follows_model_prompt()
     test_lan_setting_roundtrip()
     test_world_export_and_import()
     test_bind_modes()
