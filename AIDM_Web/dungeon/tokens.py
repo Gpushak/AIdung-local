@@ -117,6 +117,30 @@ def model_token_scale() -> float:
     return _MODEL_SCALE
 
 
+def model_scale_observed() -> bool:
+    """Масштаб уже взят из ответа модели, а не из локальной оценки."""
+    return _SCALE_OBSERVED
+
+
+def counter_kind() -> str:
+    """Чем сейчас считаем токены. Масштаб от другого счётчика применять нельзя."""
+    enc = _get_tokenizer()
+    if enc is None:
+        return "heuristic"
+    if _TOKENIZER_IS_TARGET:
+        return "o200k"
+    return "cl100k"
+
+
+# Длинная русская фраза: на коротком тексте шаблон чата перевешивает сам текст.
+_CALIBRATION_UNIT = "Ночь была тихой, и дорога вела через тёмное поле к дальнему огню. "
+
+
+def calibration_sample() -> str:
+    """Текст для пробного запроса перед первым ходом. Не короче 1000 локальных токенов."""
+    return _CALIBRATION_UNIT * 80
+
+
 def set_model_token_scale(scale: float) -> None:
     """Ставит масштаб вручную. 1.0 снова считает локальную оценку точной."""
     global _MODEL_SCALE, _SCALE_OBSERVED

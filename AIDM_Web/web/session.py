@@ -41,7 +41,7 @@ from dungeon.memory import (
     sync_memory_bank_after_undo,
 )
 from dungeon.story_cards import default_story_cards, load_story_cards, save_story_cards
-from dungeon.tokens import format_token_count, model_token_scale, set_model_token_scale
+from dungeon.tokens import counter_kind, format_token_count, model_token_scale, set_model_token_scale
 from dungeon.storage import (
     CorruptedDataError,
     atomic_write_text,
@@ -165,7 +165,8 @@ class GameSession(AIEngineMixin):
         self.api_key = settings.get("api_key", "")
         self.model = settings.get("model", "")
         saved_scale_model = str(settings.get("token_scale_model") or "")
-        if saved_scale_model == str(self.model or ""):
+        saved_counter = str(settings.get("token_scale_counter") or "")
+        if saved_scale_model == str(self.model or "") and saved_counter == counter_kind():
             set_model_token_scale(settings.get("token_scale", 1.0))
         else:
             set_model_token_scale(1.0)
@@ -528,6 +529,7 @@ class GameSession(AIEngineMixin):
                 "bind_mode": self.bind_mode,
                 "token_scale": model_token_scale(),
                 "token_scale_model": self.model,
+                "token_scale_counter": counter_kind(),
             }
         )
 

@@ -7,8 +7,10 @@ from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
 from .storage import save_history
 from .text_utils import StreamThinkFilter, clean_dm_response, clean_stream_chunk
 from .tokens import (
+    calibration_sample,
     count_tokens,
     history_window_budget,
+    model_scale_observed,
     observe_model_prompt,
     prompt_token_count,
     raw_count_tokens,
@@ -19,9 +21,41 @@ from .tokens import (
 
 
 class TurnMixin:
+    def _calibrate_token_scale(self):
+        """Один короткий запрос до нарезки истории, если масштаб ещё не известен.
+
+        Пока локальный счётчик не сверен с моделью, он завышает кириллицу:
+        первый ход после запуска упирается в свои 16к и в модель уходит около 10к.
+        Следующие ходы уже знают масштаб. Проба делается до сборки промпта.
+        """
+        if model_scale_observed() or getattr(self, "_calibrating_scale", False):
+            return
+        self._calibrating_scale = True
+        try:
+            sample = calibration_sample()
+            raw = raw_count_tokens(sample)
+            payload = self._api_payload(
+                messages=[{"role": "user", "content": sample}],
+                temperature=0,
+                max_tokens=1,
+                stream=False,
+            )
+            try:
+                response = self._api_post(payload, stream=False, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+            except Exception:
+                return
+            usage = data.get("usage") if isinstance(data, dict) else None
+            if observe_model_prompt(raw, usage) and hasattr(self, "save_settings"):
+                self.save_settings()
+        finally:
+            self._calibrating_scale = False
+
     def process_action(self, user_input="", direction_hint=None):
         self._last_api_usage = None
         try:
+            self._calibrate_token_scale()
             if direction_hint:
                 direction_hint = direction_hint.strip()
                 history_label = direction_hint

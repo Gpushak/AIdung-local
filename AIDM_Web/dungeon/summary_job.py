@@ -145,6 +145,10 @@ class SummaryMixin:
             if not self.current_world_path:
                 return
 
+            # Тот же пробный запрос, что перед ходом: иначе первый подсчёт
+            # завышает кириллицу и в суммаризацию уходит около 10к из 16к.
+            self._calibrate_token_scale()
+
             summary_path = self.current_world_path / "summary.txt"
             available_summary_history, old_summary, summary_max_tokens, compress_note = (
                 self._summary_history_budget()

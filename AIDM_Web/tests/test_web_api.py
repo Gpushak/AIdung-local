@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=3" in page.text
+        assert "app.js?v=4" in page.text
     print("OK  страница и состояние не кэшируются браузером телефона")
 
 
@@ -482,6 +482,138 @@ def test_context_scale_follows_model_prompt():
     finally:
         set_model_token_scale(1.0)
     print("OK  шкала контекста сжимает локальный счёт до prompt_tokens модели")
+
+
+def test_first_turn_learns_scale_before_packing():
+    """Первый ход сверяет счётчик до нарезки истории, иначе в модель уходит урезанный промпт."""
+    import tempfile
+
+    from dungeon.tokens import (
+        model_token_scale,
+        raw_count_tokens,
+        set_model_token_scale,
+    )
+
+    class _UsageResponse(_Response):
+        def __init__(self, usage):
+            self._usage = usage
+
+        def json(self):
+            return {"usage": self._usage}
+
+    set_model_token_scale(1.0)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+            piece = "слово " * 80
+            one = raw_count_tokens(f"Игрок: реплика 0 {piece}") + 1
+            total = int(26000 / max(one, 1)) + 5
+            history = [f"Игрок: реплика {index} {piece}" for index in range(total)]
+            (tmp / "Camp" / "history.json").write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 200
+            assert client.put(
+                "/api/settings",
+                json={
+                    "context_size": 16384,
+                    "max_tokens": 400,
+                    "summary_enabled": False,
+                    "memory_enabled": False,
+                },
+            ).status_code == 200
+            calls = []
+
+            def finish_read(_response, _key, on_delta=None):
+                if on_delta:
+                    on_delta("Готово")
+                return "Готово", False
+
+            def post(payload, **kwargs):
+                calls.append(payload)
+                if payload.get("stream") is False and payload.get("max_tokens") == 1:
+                    content = payload["messages"][0]["content"]
+                    reported = max(1, int(raw_count_tokens(content) * 0.7))
+                    return _UsageResponse({"prompt_tokens": reported, "completion_tokens": 1})
+                return _Response()
+
+            session._api_post = post
+            session._read_response = finish_read
+            assert client.post("/api/turn", json={"text": "осмотреться"}).status_code == 200
+            deadline = time.time() + 4
+            while time.time() < deadline and client.get("/api/state").json()["status"]["busy"]:
+                time.sleep(0.05)
+            turn = next(payload for payload in calls if payload.get("stream"))
+            sent = raw_count_tokens(turn["messages"][0]["content"]) + raw_count_tokens(turn["messages"][1]["content"])
+            assert model_token_scale() < 0.85
+            # Без сверки локальный потолок около 16к. После неё в промпт входит больше текста.
+            assert sent > 17000
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  первый ход узнаёт масштаб до нарезки истории")
+
+
+def test_summary_learns_scale_before_packing():
+    """Суммаризация сверяет счётчик до нарезки, иначе в модель уходит около 10к из 16к."""
+    import tempfile
+
+    from dungeon.tokens import model_token_scale, raw_count_tokens, set_model_token_scale
+
+    class _UsageResponse(_Response):
+        def __init__(self, usage):
+            self._usage = usage
+
+        def json(self):
+            return {"usage": self._usage}
+
+    set_model_token_scale(1.0)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+            piece = "слово " * 80
+            one = raw_count_tokens(f"Игрок: реплика 0 {piece}") + 1
+            total = int(26000 / max(one, 1)) + 5
+            history = [f"Игрок: реплика {index} {piece}" for index in range(total)]
+            (tmp / "Camp" / "history.json").write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 200
+            assert client.put(
+                "/api/settings",
+                json={"context_size": 16384, "memory_enabled": False},
+            ).status_code == 200
+            calls = []
+
+            def finish_read(_response, _key, on_delta=None):
+                return "Краткая хроника", False
+
+            def post(payload, **kwargs):
+                calls.append(payload)
+                if payload.get("stream") is False and payload.get("max_tokens") == 1:
+                    content = payload["messages"][0]["content"]
+                    reported = max(1, int(raw_count_tokens(content) * 0.7))
+                    return _UsageResponse({"prompt_tokens": reported, "completion_tokens": 1})
+                return _Response()
+
+            session._api_post = post
+            session._read_response = finish_read
+            assert client.post("/api/summary").status_code == 200
+            deadline = time.time() + 4
+            while time.time() < deadline and client.get("/api/state").json()["status"]["busy"]:
+                time.sleep(0.05)
+            summary = next(payload for payload in calls if payload.get("max_tokens") == 1000)
+            sent = raw_count_tokens(summary["messages"][0]["content"])
+            assert model_token_scale() < 0.85
+            assert sent > 17000
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  суммаризация узнаёт масштаб до нарезки истории")
 
 
 def test_bind_modes():
@@ -518,6 +650,8 @@ if __name__ == "__main__":
     test_resume_sees_partial_reply_and_finished_jobs()
     test_state_is_not_cached()
     test_context_scale_follows_model_prompt()
+    test_first_turn_learns_scale_before_packing()
+    test_summary_learns_scale_before_packing()
     test_lan_setting_roundtrip()
     test_world_export_and_import()
     test_bind_modes()

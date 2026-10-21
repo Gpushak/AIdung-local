@@ -130,6 +130,12 @@ main {
 #log .intro { color: var(--gold); font-style: italic; }
 #log .system, #log .other { color: var(--system); font-size: 14px; font-style: italic; }
 #log .draft { opacity: 0.85; }
+#log .fresh-mark {
+  height: 0;
+  margin: 0.2em 0 1.15em;
+  border: 0;
+  border-top: 1px solid #6a6158;
+}
 
 #bar-row { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
 #bar { flex: 1; height: 4px; background: #2a251f; border-radius: 99px; overflow: hidden; }

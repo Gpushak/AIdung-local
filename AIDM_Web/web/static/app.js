@@ -108,7 +108,29 @@ function paintStatus(status) {
   syncPolling();
 }
 
-let tailReady = false;
+let freshIndex = null;
+let awaitFresh = false;
+let freshAnchor = null;
+
+function noteFreshReply() {
+  awaitFresh = true;
+  const rows = state && state.history ? state.history : [];
+  freshAnchor = rows.length ? rows[rows.length - 1].index : -1;
+}
+
+function settleFresh(snap) {
+  if (!awaitFresh || !snap || snap.streaming) return;
+  const rows = snap.history || [];
+  const last = rows[rows.length - 1];
+  if (last && last.kind === "dm" && last.index !== freshAnchor) freshIndex = last.index;
+  awaitFresh = false;
+}
+
+function freshMark() {
+  const line = document.createElement("hr");
+  line.className = "fresh-mark";
+  return line;
+}
 
 function jumpToEnd() {
   tailReady = false;
@@ -143,7 +165,11 @@ function renderLog(mode = "end", draftOverride) {
     earlier.addEventListener("click", () => loadOlder());
     logEl.appendChild(earlier);
   }
+  const lineBeforeDraft = awaitFresh && drafting;
   for (const row of state.history) {
+    if (!lineBeforeDraft && freshIndex != null && row.index === freshIndex) {
+      logEl.appendChild(freshMark());
+    }
     const p = document.createElement("p");
     p.className = row.kind;
     p.dataset.index = String(row.index);
@@ -155,6 +181,7 @@ function renderLog(mode = "end", draftOverride) {
     logEl.appendChild(p);
   }
   if (drafting) {
+    if (lineBeforeDraft) logEl.appendChild(freshMark());
     const p = document.createElement("p");
     p.className = "dm draft";
     p.id = "draft";
@@ -229,6 +256,7 @@ function applySnapshot(snap, mode = "end") {
   if (typeof snap.rev === "number") revision = snap.rev;
   state = snap;
   drafting = Boolean(snap.streaming);
+  settleFresh(snap);
   paintWorlds();
   paintFill(snap.fill);
   paintStatus(snap.status);
@@ -287,6 +315,7 @@ function connectEvents() {
     if (typeof event.rev === "number") revision = event.rev;
     if (event.kind === "dm_start") {
       drafting = true;
+      noteFreshReply();
       if (state) state.streaming = true;
       renderLog("end");
     } else if (event.kind === "dm_delta") {
