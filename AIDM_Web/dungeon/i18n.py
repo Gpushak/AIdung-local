@@ -861,10 +861,6 @@ _PROMPT_OVERRIDES = {"ru": {}, "en": {}}
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def prompt_keys():
-    return PROMPT_KEYS
-
-
 def builtin_prompt(lang, key):
     """Встроенный текст без пользовательских правок."""
     lang = normalize_lang(lang)

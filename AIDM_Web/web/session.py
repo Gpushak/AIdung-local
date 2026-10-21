@@ -9,6 +9,7 @@ import threading
 import zipfile
 
 from dungeon.ai_engine import ACTION, CARDS, AIEngineMixin
+from dungeon.session import SharedTurnMixin
 from dungeon.config import (
     BASE_DIR,
     DEFAULT_IMAGE_STYLE,
@@ -47,14 +48,12 @@ from dungeon.storage import (
     atomic_write_text,
     clamp_summary_cursor,
     clamp_summary_fill_percent,
-    default_summary_cursor,
     ensure_introduction_in_history,
     format_introduction_history,
     get_world_list,
     load_global_settings,
     load_world_config,
     normalize_api_presets,
-    read_summary_cursor,
     save_global_settings,
     save_history,
     save_summary_cursor,
@@ -147,7 +146,7 @@ HISTORY_PAGE_MESSAGES = 40
 HISTORY_PAGE_CHARS = 14000
 
 
-class GameSession(AIEngineMixin):
+class GameSession(SharedTurnMixin, AIEngineMixin):
     def __init__(self):
         self._subscribers = []
         self._sub_lock = threading.Lock()
@@ -457,24 +456,6 @@ class GameSession(AIEngineMixin):
             "cards": default_story_cards(self.language),
         }
 
-    def _introduction_cursor_delta(self, before, after):
-        if len(after) == len(before) + 1 and after and after[0].startswith(INTRO_PREFIX):
-            return 1
-        if len(before) == len(after) + 1 and before and before[0].startswith(INTRO_PREFIX):
-            return -1
-        return 0
-
-    def _load_summary_cursor(self, raw_history):
-        intro_delta = self._introduction_cursor_delta(raw_history, self.history)
-        stored = read_summary_cursor(self.current_world_path)
-        if stored is None:
-            self.covered_count = default_summary_cursor(self.current_world_path, len(self.history))
-        else:
-            if stored > 0:
-                stored += intro_delta
-            self.covered_count = clamp_summary_cursor(stored, len(self.history))
-        save_summary_cursor(self.current_world_path, self.covered_count)
-
     def load_world(self, world_name):
         world_path = BASE_DIR / world_name
         if not world_path.exists():
@@ -536,26 +517,20 @@ class GameSession(AIEngineMixin):
     def settings_view(self):
         groups = []
         for group_key, keys in PROMPT_GROUPS:
-            groups.append(
-                {
-                    "title": self.tr(group_key),
-                    "prompts": [
-                        {
-                            "key": key,
-                            "name": self.tr("prompt_name." + key[len("prompt.") :]),
-                            "text": t(self.language, key) if key in self.prompt_overrides.get(self.language, {}) else builtin_prompt(self.language, key),
-                            "builtin": builtin_prompt(self.language, key),
-                            "override": self.prompt_overrides.get(self.language, {}).get(key, ""),
-                        }
-                        for key in keys
-                    ],
-                }
-            )
-        # Показать сохранённый текст правки, а не только встроенный.
-        for group in groups:
-            for prompt in group["prompts"]:
-                override = self.prompt_overrides.get(self.language, {}).get(prompt["key"])
-                prompt["text"] = override if isinstance(override, str) and override.strip() else prompt["builtin"]
+            prompts = []
+            for key in keys:
+                override = self.prompt_overrides.get(self.language, {}).get(key, "")
+                builtin = builtin_prompt(self.language, key)
+                prompts.append(
+                    {
+                        "key": key,
+                        "name": self.tr("prompt_name." + key[len("prompt.") :]),
+                        "text": override if isinstance(override, str) and override.strip() else builtin,
+                        "builtin": builtin,
+                        "override": override,
+                    }
+                )
+            groups.append({"title": self.tr(group_key), "prompts": prompts})
         return {
             "api_url": self.api_url,
             "api_key": self.api_key,
@@ -750,14 +725,6 @@ class GameSession(AIEngineMixin):
         self._begin_operation(ACTION)
         self.refresh_busy_state()
 
-    def _dispatch_turn(self, target, args=(), kwargs=None):
-        kwargs = kwargs or {}
-        if self.memory_enabled:
-            self.turns_since_memory += 1
-            self.update_memory_label()
-        self.begin_action_turn()
-        threading.Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
-
     def _stage_player_line(self, text):
         """Кладёт реплику игрока в ленту до запроса к модели."""
         text = (text or "").strip()
@@ -825,12 +792,6 @@ class GameSession(AIEngineMixin):
         self.emit("history")
         self._dispatch_turn(self.process_action, (last_player_input,))
         return True
-
-    def note_history_revised(self, index):
-        if index < self.covered_count:
-            self.covered_count = max(0, int(index))
-            if self.current_world_path:
-                save_summary_cursor(self.current_world_path, self.covered_count)
 
     def edit_message(self, index, text):
         if self.is_busy() or not self.current_world_path:
