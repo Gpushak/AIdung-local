@@ -30,6 +30,18 @@ STATIC_DIR = _static_dir()
 WEB_PORT = 8765
 
 
+def app_icon_path():
+    """Файл иконки, который пользователь положил в папку проекта."""
+    if getattr(sys, "frozen", False):
+        root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    else:
+        root = Path(__file__).resolve().parent.parent
+    for candidate in (root / "AIDM_ICO.ico", STATIC_DIR / "AIDM_ICO.ico"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def local_ipv4s():
     """Адрес Wi-Fi, через который компьютер выходит наружу."""
     primary = default_route_ipv4()
@@ -61,6 +73,13 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
     @app.get("/")
     def index():
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/favicon.ico")
+    def favicon():
+        icon = app_icon_path()
+        if icon is None:
+            raise HTTPException(status_code=404)
+        return FileResponse(icon, media_type="image/x-icon")
 
     @app.get("/api/state")
     def state(start: int | None = None):

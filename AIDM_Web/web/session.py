@@ -42,7 +42,13 @@ from dungeon.memory import (
     sync_memory_bank_after_undo,
 )
 from dungeon.story_cards import default_story_cards, load_story_cards, save_story_cards
-from dungeon.tokens import counter_kind, format_token_count, model_token_scale, set_model_token_scale
+from dungeon.tokens import (
+    counter_kind,
+    format_token_count,
+    model_scale_observed,
+    model_token_scale,
+    set_model_token_scale,
+)
 from dungeon.storage import (
     CorruptedDataError,
     atomic_write_text,
@@ -59,6 +65,30 @@ from dungeon.storage import (
     save_summary_cursor,
     save_world_files,
 )
+
+
+def _scale_table(raw):
+    """Масштаб токенов по виду счётчика и имени модели."""
+    table = {}
+    if not isinstance(raw, dict):
+        return table
+    for kind, models in raw.items():
+        if not isinstance(kind, str) or not isinstance(models, dict):
+            continue
+        bucket = {}
+        for name, scale in models.items():
+            if not isinstance(name, str) or not name:
+                continue
+            try:
+                value = float(scale)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0:
+                continue
+            bucket[name] = value
+        if bucket:
+            table[kind] = bucket
+    return table
 
 
 _BAD_WORLD_NAME = set('\\/:*?"<>|')
@@ -163,12 +193,16 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.api_url = settings["api_url"]
         self.api_key = settings.get("api_key", "")
         self.model = settings.get("model", "")
+        self.token_scales = _scale_table(settings.get("token_scales"))
         saved_scale_model = str(settings.get("token_scale_model") or "")
         saved_counter = str(settings.get("token_scale_counter") or "")
-        if saved_scale_model == str(self.model or "") and saved_counter == counter_kind():
-            set_model_token_scale(settings.get("token_scale", 1.0))
-        else:
-            set_model_token_scale(1.0)
+        try:
+            legacy_scale = float(settings.get("token_scale", 1.0))
+        except (TypeError, ValueError):
+            legacy_scale = 1.0
+        if saved_scale_model and saved_counter and abs(legacy_scale - 1.0) > 0.001:
+            self.token_scales.setdefault(saved_counter, {}).setdefault(saved_scale_model, legacy_scale)
+        self._restore_token_scale(self.model)
         self.active_api_preset = settings.get("active_api_preset", "")
         self.api_presets = settings.get("api_presets", [])
         self.temperature = settings["temperature"]
@@ -487,7 +521,41 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.update_context_indicator()
         self.emit("history")
 
+    def _remember_token_scale(self, model=None):
+        """Запоминает уже измеренный масштаб за названной моделью."""
+        name = self.model if model is None else model
+        name = str(name or "")
+        if not name or not model_scale_observed():
+            return
+        self.token_scales.setdefault(counter_kind(), {})[name] = model_token_scale()
+
+    def _restore_token_scale(self, model):
+        """Возвращает сохранённый масштаб. False, если эту модель ещё не сверяли."""
+        saved = self.token_scales.get(counter_kind(), {}).get(str(model or ""))
+        if saved is None:
+            set_model_token_scale(1.0)
+            return False
+        set_model_token_scale(saved)
+        return model_scale_observed()
+
+    def _switch_model_scale(self, previous_model):
+        """Перед перерисовкой шкалы берёт масштаб новой модели, а не сырой счётчик.
+
+        Неизвестную модель сначала сверяет коротким запросом. Пока проба не
+        дошла, шкала остаётся на локальной оценке, как до первого хода.
+        """
+        previous = str(previous_model or "")
+        current = str(self.model or "")
+        if previous == current:
+            return
+        self._remember_token_scale(previous)
+        if self._restore_token_scale(current):
+            return
+        self._calibrate_token_scale()
+        self._remember_token_scale(current)
+
     def save_settings(self):
+        self._remember_token_scale()
         save_global_settings(
             {
                 "api_url": self.api_url,
@@ -512,6 +580,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                 "token_scale": model_token_scale(),
                 "token_scale_model": self.model,
                 "token_scale_counter": counter_kind(),
+                "token_scales": self.token_scales,
             }
         )
 
@@ -576,8 +645,6 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.api_key = str(payload.get("api_key", self.api_key) or "")
         previous_model = self.model
         self.model = str(payload.get("model", self.model) or "")
-        if self.model != previous_model:
-            set_model_token_scale(1.0)
         self.active_api_preset = str(payload.get("active_api_preset", self.active_api_preset) or "")
         self.api_presets = normalize_api_presets(payload.get("api_presets", self.api_presets))
         self.temperature = float(payload.get("temperature", self.temperature))
@@ -597,6 +664,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         style = payload.get("image_prompt_style", self.image_prompt_style)
         self.image_prompt_style = style if style in IMAGE_PROMPT_STYLES else DEFAULT_IMAGE_STYLE
         self.prompt_overrides = set_prompt_overrides(overrides)
+        self._switch_model_scale(previous_model)
         self.save_settings()
         self.update_context_indicator()
         self.update_memory_label()
@@ -622,9 +690,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.api_url = found.get("api_url") or ""
         self.api_key = found.get("api_key") or ""
         self.model = found.get("model") or ""
-        if self.model != previous_model:
-            set_model_token_scale(1.0)
         self.active_api_preset = found["name"]
+        self._switch_model_scale(previous_model)
         self.save_settings()
         self.update_context_indicator()
         return self.presets_view()

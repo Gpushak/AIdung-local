@@ -54,6 +54,19 @@ def _text(language):
     return COPY["en"] if language == "en" else COPY["ru"]
 
 
+def _apply_icon(root):
+    """Ставит иконку проекта на окно запуска и на сообщение об ошибке."""
+    from web.server import app_icon_path
+
+    icon = app_icon_path()
+    if icon is None:
+        return
+    try:
+        root.iconbitmap(default=str(icon))
+    except tk.TclError:
+        pass
+
+
 def ask_bind_mode(port, settings):
     """Возвращает local, lan или tailscale. None — пользователь закрыл окно."""
     language = settings.get("language", "ru") if isinstance(settings, dict) else "ru"
@@ -66,6 +79,7 @@ def ask_bind_mode(port, settings):
     chosen = {"mode": None}
     root = tk.Tk()
     root.title(text["title"])
+    _apply_icon(root)
     root.configure(bg=BG)
     root.resizable(False, False)
     try:
@@ -178,6 +192,7 @@ def ask_bind_mode(port, settings):
 def tell_port_busy(port, language):
     text = _text(language)
     root = tk.Tk()
+    _apply_icon(root)
     root.withdraw()
     messagebox.showerror(text["title"], text["busy"].format(port=port), parent=root)
     root.destroy()

@@ -17,6 +17,8 @@ python -m PyInstaller `
     --onefile `
     --console `
     --name "AIDM" `
+    --icon (Join-Path $ProjectRoot "AIDM_ICO.ico") `
+    --add-data "$(Join-Path $ProjectRoot 'AIDM_ICO.ico');." `
     --distpath $DistDir `
     --workpath $BuildDir `
     --specpath $BuildDir `

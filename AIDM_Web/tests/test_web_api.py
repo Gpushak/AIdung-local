@@ -453,6 +453,10 @@ def test_state_is_not_cached():
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
         assert "app.js?v=6" in page.text
+        assert 'rel="icon"' in page.text
+        icon = client.get("/favicon.ico")
+        assert icon.status_code == 200
+        assert icon.content[:4] == b"\x00\x00\x01\x00"
     print("OK  страница и состояние не кэшируются браузером телефона")
 
 
@@ -646,7 +650,13 @@ def test_preset_switch_updates_connection():
     with tempfile.TemporaryDirectory() as folder:
         tmp = Path(folder)
         _use_tmp(tmp)
-        client = TestClient(create_app())
+        app = create_app()
+
+        def _offline(*_args, **_kwargs):
+            raise OSError("offline")
+
+        app.state.session._api_post = _offline
+        client = TestClient(app)
         saved = client.put(
             "/api/settings",
             json={
@@ -690,6 +700,90 @@ def test_preset_switch_updates_connection():
     print("OK  список моделей переключает сохранённую конфигурацию")
 
 
+def test_model_switch_keeps_summary_bar_scaled():
+    """Смена модели не рисует шкалу сырым счётчиком и помнит уже измеренный масштаб."""
+    import tempfile
+
+    from dungeon.tokens import calibration_sample, raw_count_tokens, set_model_token_scale
+
+    class _UsageResponse(_Response):
+        def __init__(self, usage):
+            self._usage = usage
+
+        def json(self):
+            return {"usage": self._usage}
+
+    set_model_token_scale(1.0)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 200
+            session.history = ["Игрок: " + ("тёмный коридор тянется дальше. " * 40)]
+            session.covered_count = 0
+            session.model = "alpha"
+            set_model_token_scale(0.75)
+            session._remember_token_scale()
+            saved = client.put(
+                "/api/settings",
+                json={
+                    "model": "alpha",
+                    "summary_enabled": False,
+                    "memory_enabled": False,
+                    "active_api_preset": "Alpha",
+                    "api_presets": [
+                        {
+                            "name": "Alpha",
+                            "api_url": "http://127.0.0.1:9/v1/chat/completions",
+                            "api_key": "",
+                            "model": "alpha",
+                        },
+                        {
+                            "name": "Beta",
+                            "api_url": "http://127.0.0.1:9/v1/chat/completions",
+                            "api_key": "",
+                            "model": "beta",
+                        },
+                    ],
+                },
+            )
+            assert saved.status_code == 200, saved.text
+            used_a, budget_a, _ratio_a = session.context_fill_state()
+            set_model_token_scale(1.0)
+            used_raw, budget_raw, _ratio_raw = session.context_fill_state()
+            set_model_token_scale(0.75)
+            session._remember_token_scale()
+            assert used_a < used_raw
+            assert budget_a > budget_raw
+            sample_raw = raw_count_tokens(calibration_sample())
+            calls = []
+
+            def post(payload, **_kwargs):
+                calls.append(payload.get("model"))
+                return _UsageResponse({"prompt_tokens": int(sample_raw * 0.8)})
+
+            session._api_post = post
+            switched = client.post("/api/presets/activate", json={"name": "Beta"})
+            assert switched.status_code == 200, switched.text
+            assert calls == ["beta"]
+            fill = client.get("/api/state").json()["fill"]
+            assert fill["used"] < used_raw
+            assert fill["budget"] > budget_raw
+            back = client.post("/api/presets/activate", json={"name": "Alpha"})
+            assert back.status_code == 200, back.text
+            assert calls == ["beta"]
+            restored = client.get("/api/state").json()["fill"]
+            assert restored["used"] == used_a
+            assert restored["budget"] == budget_a
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  смена модели не раздувает шкалу до сырого счёта")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -706,4 +800,5 @@ if __name__ == "__main__":
     test_world_export_and_import()
     test_bind_modes()
     test_preset_switch_updates_connection()
+    test_model_switch_keeps_summary_bar_scaled()
     print("ALL WEB TESTS PASSED")
