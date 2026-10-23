@@ -263,6 +263,13 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             raise HTTPException(400, detail={"prompts": problems})
         return game().settings_view()
 
+    @app.post("/api/presets/activate")
+    def activate_preset(payload: dict):
+        try:
+            return game().activate_preset(payload.get("name", ""))
+        except KeyError:
+            raise HTTPException(404, "missing")
+
     @app.get("/api/prompt")
     def last_prompt():
         return {"prompt": game().prompt_view()}

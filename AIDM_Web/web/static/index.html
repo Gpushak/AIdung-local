@@ -4,15 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>AIDM</title>
-  <link rel="stylesheet" href="/static/style.css?v=4">
+  <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
   <div class="topbar">
-    <button type="button" id="menu-toggle" aria-expanded="false" data-i18n="btn.menu">Меню</button>
+    <div class="top-actions">
+      <button type="button" id="menu-toggle" aria-expanded="false" data-i18n="btn.menu">Меню</button>
+      <div class="models">
+        <button type="button" id="models-toggle" aria-haspopup="menu" aria-expanded="false">
+          <span data-i18n="btn.models">Модели</span>
+          <span id="models-current" hidden></span>
+        </button>
+        <div id="models-menu" class="pop" role="menu" hidden></div>
+      </div>
+    </div>
     <div id="topbar-body">
     <header>
       <h1 data-i18n="app_title">AIDM</h1>
-      <select id="world-select"></select>
+      <div class="worlds-picker">
+        <button type="button" id="world-toggle" aria-haspopup="menu" aria-expanded="false">
+          <span id="world-current" data-i18n="no_worlds">Нет миров</span>
+        </button>
+        <div id="world-menu" class="pop" role="menu" hidden></div>
+      </div>
       <button type="button" id="lang">RU</button>
     </header>
 
@@ -80,6 +94,6 @@
     <div id="panel-body"></div>
   </dialog>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

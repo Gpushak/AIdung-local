@@ -2,7 +2,6 @@ const logEl = document.querySelector("#log");
 const actionEl = document.querySelector("#action");
 const sendEl = document.querySelector("#send");
 const statusEl = document.querySelector("#status");
-const worldEl = document.querySelector("#world-select");
 const barEl = document.querySelector("#bar");
 const barLabel = document.querySelector("#bar-label");
 const noticeEl = document.querySelector("#notice");
@@ -228,15 +227,118 @@ async function loadOlder() {
   }
 }
 
-function paintWorlds() {
-  worldEl.innerHTML = "";
-  for (const name of state.worlds || []) {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    if (name === state.world) option.selected = true;
-    worldEl.appendChild(option);
+function paintModels() {
+  const menu = document.querySelector("#models-menu");
+  const current = document.querySelector("#models-current");
+  const presets = (state && state.presets) || { active: "", items: [] };
+  const active = (presets.items || []).find((item) => item.name === presets.active);
+  current.textContent = active ? active.name : "";
+  current.hidden = !active;
+  menu.replaceChildren();
+  if (!(presets.items || []).length) {
+    const empty = document.createElement("p");
+    empty.className = "pop-empty";
+    empty.textContent = t("models.empty");
+    menu.append(empty);
+    return;
   }
+  for (const item of presets.items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitemradio");
+    button.setAttribute("aria-checked", item.name === presets.active ? "true" : "false");
+    const name = document.createElement("span");
+    name.textContent = item.name;
+    button.append(name);
+    if (item.model) {
+      const model = document.createElement("small");
+      model.textContent = item.model;
+      button.append(model);
+    }
+    button.addEventListener("click", () => selectPreset(item.name));
+    menu.append(button);
+  }
+}
+
+async function selectPreset(name) {
+  setModelsOpen(false);
+  if (state && state.presets && state.presets.active === name) return;
+  const presets = await api("/api/presets/activate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (state) state.presets = presets;
+  paintModels();
+  if (!settingsCache) return;
+  const found = (settingsCache.api_presets || []).find((item) => item.name === presets.active);
+  if (!found) return;
+  settingsCache.active_api_preset = found.name;
+  settingsCache.api_url = found.api_url || "";
+  settingsCache.api_key = found.api_key || "";
+  settingsCache.model = found.model || "";
+  const preset = document.querySelector("#settings-preset");
+  if (preset) preset.value = found.name;
+  for (const key of ["api_url", "api_key", "model"]) {
+    const input = document.querySelector(`[data-setting="${key}"]`);
+    if (input) input.value = settingsCache[key];
+  }
+}
+
+function setModelsOpen(open) {
+  if (open) setWorldsOpen(false);
+  const menu = document.querySelector("#models-menu");
+  const toggle = document.querySelector("#models-toggle");
+  menu.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.closest(".models").classList.toggle("open", open);
+}
+
+function paintWorlds() {
+  const menu = document.querySelector("#world-menu");
+  const current = document.querySelector("#world-current");
+  const names = (state && state.worlds) || [];
+  const active = state && names.includes(state.world) ? state.world : "";
+  current.textContent = active || t("no_worlds");
+  menu.replaceChildren();
+  if (!names.length) {
+    const empty = document.createElement("p");
+    empty.className = "pop-empty";
+    empty.textContent = t("no_worlds");
+    menu.append(empty);
+    return;
+  }
+  for (const name of names) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitemradio");
+    button.setAttribute("aria-checked", name === active ? "true" : "false");
+    button.textContent = name;
+    button.addEventListener("click", () => openWorld(name));
+    menu.append(button);
+  }
+}
+
+async function openWorld(name) {
+  setWorldsOpen(false);
+  if (state && state.world === name) return;
+  applySnapshot(await api("/api/worlds/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), "end");
+}
+
+function setWorldsOpen(open) {
+  if (open) setModelsOpen(false);
+  const menu = document.querySelector("#world-menu");
+  const toggle = document.querySelector("#world-toggle");
+  menu.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.closest(".worlds-picker").classList.toggle("open", open);
+  if (!open) return;
+  const checked = menu.querySelector('[aria-checked="true"]');
+  if (checked) menu.scrollTop = Math.max(0, checked.offsetTop - 8);
 }
 
 function applySnapshot(snap, mode = "end") {
@@ -258,6 +360,7 @@ function applySnapshot(snap, mode = "end") {
   drafting = Boolean(snap.streaming);
   settleFresh(snap);
   paintWorlds();
+  paintModels();
   paintFill(snap.fill);
   paintStatus(snap.status);
   paintNotice((snap.notices || []).at(-1) || "");
@@ -469,6 +572,26 @@ document.querySelector("#menu-toggle").addEventListener("click", () => {
   document.querySelector("#menu-toggle").setAttribute("aria-expanded", open ? "true" : "false");
 });
 
+document.querySelector("#models-toggle").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = document.querySelector("#models-menu");
+  setModelsOpen(menu.hidden);
+});
+document.querySelector("#world-toggle").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = document.querySelector("#world-menu");
+  setWorldsOpen(menu.hidden);
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".models")) setModelsOpen(false);
+  if (!event.target.closest(".worlds-picker")) setWorldsOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (!document.querySelector("#models-menu").hidden) setModelsOpen(false);
+  if (!document.querySelector("#world-menu").hidden) setWorldsOpen(false);
+});
+
 document.querySelector("#act").addEventListener("click", async () => {
   if (document.body.classList.contains("busy")) {
     await api("/api/stop", { method: "POST" });
@@ -508,17 +631,6 @@ document.querySelector("#edit").addEventListener("click", () => {
   if (rows.length) openEditor(rows[rows.length - 1].index);
 });
 document.querySelector("#summarize").addEventListener("click", () => api("/api/summary", { method: "POST" }));
-
-worldEl.addEventListener("change", async () => {
-  state = await api("/api/worlds/open", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: worldEl.value }),
-  });
-  renderLog("end");
-  paintFill(state.fill);
-  paintStatus(state.status);
-});
 
 document.querySelector("#lang").addEventListener("click", async () => {
   const next = (state.language === "en") ? "ru" : "en";
@@ -1167,6 +1279,7 @@ async function renderSettings() {
     if (spec.max != null) input.max = String(spec.max);
     if (spec.step != null) input.step = String(spec.step);
     input.value = settingsCache[key] ?? "";
+    input.dataset.setting = key;
     input.addEventListener("input", () => {
       settingsCache[key] = spec.type === "number" ? Number(input.value) : input.value;
     });
@@ -1209,6 +1322,7 @@ async function renderSettings() {
     const box = document.createElement("div");
     box.append(heading(t("dialog.api_config")));
     const preset = document.createElement("select");
+    preset.id = "settings-preset";
     const manual = document.createElement("option");
     manual.value = "";
     manual.textContent = t("dialog.manual_preset");

@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=4" in page.text
+        assert "app.js?v=6" in page.text
     print("OK  страница и состояние не кэшируются браузером телефона")
 
 
@@ -640,6 +640,56 @@ def test_bind_modes():
     print("OK  режим запуска отличает Wi-Fi от Tailscale")
 
 
+def test_preset_switch_updates_connection():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        client = TestClient(create_app())
+        saved = client.put(
+            "/api/settings",
+            json={
+                "api_url": "http://localhost:1234/v1/chat/completions",
+                "api_key": "",
+                "model": "gemma",
+                "active_api_preset": "Local",
+                "api_presets": [
+                    {
+                        "name": "Local",
+                        "api_url": "http://localhost:1234/v1/chat/completions",
+                        "api_key": "",
+                        "model": "gemma",
+                    },
+                    {
+                        "name": "Remote",
+                        "api_url": "http://example.test/v1/chat/completions",
+                        "api_key": "secret",
+                        "model": "other",
+                    },
+                ],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        state = client.get("/api/state").json()
+        assert state["presets"]["active"] == "Local"
+        assert [item["name"] for item in state["presets"]["items"]] == ["Local", "Remote"]
+        assert "api_key" not in state["presets"]["items"][1]
+        switched = client.post("/api/presets/activate", json={"name": "Remote"})
+        assert switched.status_code == 200, switched.text
+        body = switched.json()
+        assert body["active"] == "Remote"
+        assert "secret" not in json.dumps(body)
+        settings = client.get("/api/settings").json()
+        assert settings["model"] == "other"
+        assert settings["api_url"] == "http://example.test/v1/chat/completions"
+        assert settings["api_key"] == "secret"
+        assert settings["active_api_preset"] == "Remote"
+        missing = client.post("/api/presets/activate", json={"name": "Nope"})
+        assert missing.status_code == 404
+    print("OK  список моделей переключает сохранённую конфигурацию")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -655,4 +705,5 @@ if __name__ == "__main__":
     test_lan_setting_roundtrip()
     test_world_export_and_import()
     test_bind_modes()
+    test_preset_switch_updates_connection()
     print("ALL WEB TESTS PASSED")

@@ -402,6 +402,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "memory": self.memory_view(),
             "meters": self.meters_view(),
             "cards": self.story_cards,
+            "presets": self.presets_view(),
         }
 
     def meters_view(self):
@@ -602,6 +603,32 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.refresh_busy_state()
         return []
 
+    def presets_view(self):
+        return {
+            "active": self.active_api_preset or "",
+            "items": [
+                {"name": item["name"], "model": item.get("model") or ""}
+                for item in self.api_presets
+            ],
+        }
+
+    def activate_preset(self, name):
+        """Подставляет сохранённые адрес, ключ и модель и сразу записывает настройки."""
+        wanted = str(name or "").strip()
+        found = next((item for item in self.api_presets if item["name"] == wanted), None)
+        if found is None:
+            raise KeyError(wanted)
+        previous_model = self.model
+        self.api_url = found.get("api_url") or ""
+        self.api_key = found.get("api_key") or ""
+        self.model = found.get("model") or ""
+        if self.model != previous_model:
+            set_model_token_scale(1.0)
+        self.active_api_preset = found["name"]
+        self.save_settings()
+        self.update_context_indicator()
+        return self.presets_view()
+
     def strings_view(self):
         keys = [
             "app_title",
@@ -609,6 +636,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "btn.send",
             "btn.make_move",
             "btn.menu",
+            "btn.models",
+            "models.empty",
             "btn.next",
             "btn.stop",
             "btn.undo",

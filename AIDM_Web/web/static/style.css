@@ -39,6 +39,97 @@ body {
 
 #menu-toggle, #act { display: none; }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px 0;
+}
+
+.models { position: relative; }
+.models.open #models-toggle,
+.worlds-picker.open #world-toggle { border-color: var(--gold); color: var(--gold); }
+
+#models-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(280px, 70vw);
+}
+
+#models-current {
+  color: var(--gold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 5;
+  min-width: max(100%, 220px);
+  width: max-content;
+  max-width: min(320px, 80vw);
+  max-height: min(360px, 50vh);
+  overflow: auto;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.pop button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--ink);
+  border: 0;
+  border-radius: 6px;
+  font: 14px/1.3 "Segoe UI", sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pop button[aria-checked="true"] { color: var(--gold); }
+
+.pop button small,
+.pop .pop-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pop .pop-empty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.worlds-picker {
+  position: relative;
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 280px;
+}
+
+#world-toggle {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+}
+
+#world-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 header {
   display: flex;
   flex-wrap: wrap;
@@ -55,7 +146,7 @@ h1 {
   font-weight: 600;
 }
 
-header button, nav button, #menu-toggle, .composer-actions button, dialog button, dialog input {
+header button, nav button, #menu-toggle, #models-toggle, #world-toggle, .composer-actions button, dialog button, dialog input {
   background: transparent;
   color: var(--ink);
   border: 1px solid var(--line);
@@ -66,6 +157,18 @@ header button, nav button, #menu-toggle, .composer-actions button, dialog button
   cursor: pointer;
   touch-action: manipulation;
 }
+
+header .pop button {
+  min-height: 0;
+  background: transparent;
+  color: var(--ink);
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 14px/1.3 "Segoe UI", sans-serif;
+}
+
+header .pop button[aria-checked="true"] { color: var(--gold); }
 
 select {
   background-color: var(--paper);
@@ -250,15 +353,19 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
 @media (max-width: 720px) {
   header { padding: 8px 12px 6px; gap: 8px; }
   h1 { flex: 1 1 100%; font-size: 15px; }
-  #world-select { flex: 1 1 auto; min-width: 0; min-height: 44px; font-size: 16px; }
+  .worlds-picker { flex: 1 1 auto; max-width: none; }
+  #world-toggle { min-height: 44px; font-size: 16px; }
   #lang { flex: 0 0 auto; }
+  .top-actions { padding: 8px 12px 0; }
   #menu-toggle {
     display: inline-flex;
     align-items: center;
-    margin: 8px 12px;
+    margin: 0;
     min-height: 44px;
   }
-  .topbar.open #menu-toggle { border-color: var(--gold); color: var(--gold); }
+  .topbar.open #menu-toggle,
+  .models.open #models-toggle,
+  .worlds-picker.open #world-toggle { border-color: var(--gold); color: var(--gold); }
   #topbar-body { display: none; }
   .topbar.open #topbar-body { display: block; }
   nav {
@@ -266,7 +373,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     overflow-x: auto;
     padding: 0 12px 8px;
   }
-  nav button, header button, .composer-actions button, dialog button, #menu-toggle { min-height: 44px; }
+  nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #world-toggle { min-height: 44px; }
   nav button { flex: 0 0 auto; }
   main { width: calc(100% - 16px); }
   #log { padding: 16px 14px 8px; border-radius: 12px; min-height: 36dvh; }
