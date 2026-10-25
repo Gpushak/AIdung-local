@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=6" in page.text
+        assert "app.js?v=7" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -784,6 +784,35 @@ def test_model_switch_keeps_summary_bar_scaled():
     print("OK  смена модели не раздувает шкалу до сырого счёта")
 
 
+def test_finished_reply_is_settled_before_processing_ends():
+    """Финал хода уже содержит обе реплики и закрытый черновик, пока processing ещё истинен."""
+    import tempfile
+
+    from dungeon.i18n import DM_PREFIX, PLAYER_PREFIX
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        session.processing = True
+        session.history.append(f"{PLAYER_PREFIX} осмотреться")
+        session.start_dm_stream()
+        session.append_to_dm_stream("Тропа ")
+        session.history.append(f"{DM_PREFIX} Тропа вывела к реке")
+        session.finalize_dm_stream("Тропа вывела к реке")
+        assert session.processing is True
+        done = client.get("/api/state").json()
+        assert done["streaming"] is False
+        assert done["draft"] == ""
+        assert any(row["kind"] == "player" and row["text"] == "осмотреться" for row in done["history"])
+        assert any(row["kind"] == "dm" and row["text"] == "Тропа вывела к реке" for row in done["history"])
+        assert done["fill"]["label"]
+    print("OK  финал хода закрывает черновик до конца обработки")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -801,4 +830,5 @@ if __name__ == "__main__":
     test_bind_modes()
     test_preset_switch_updates_connection()
     test_model_switch_keeps_summary_bar_scaled()
+    test_finished_reply_is_settled_before_processing_ends()
     print("ALL WEB TESTS PASSED")

@@ -170,10 +170,11 @@ class TurnMixin:
 
             final_narration = clean_dm_response(ai_text)
 
-            self.root.after(0, lambda f=final_narration: self.finalize_dm_stream(f))
-
+            # Сначала история, потом событие финала. В вебе after выполняется
+            # сразу: иначе страница успевает увидеть пустой черновик без ответа.
             self.history.append(f"{DM_PREFIX} {final_narration}")
             save_history(self.current_world_path, self.history)
+            self.root.after(0, lambda f=final_narration: self.finalize_dm_stream(f))
 
             if cancelled:
                 # Частичный ответ сохраняем в истории, но фоновые задачи не

@@ -227,6 +227,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.story_cards = {"cards": []}
         self.processing = False
         self.draft_text = ""
+        self._dm_streaming = False
         self.revision = 0
         self.stream_start_index = None
         self.last_sent_prompt = None
@@ -280,6 +281,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
 
     def start_dm_stream(self):
         self.draft_text = ""
+        self._dm_streaming = True
         self.emit("dm_start")
 
     def append_to_dm_stream(self, chunk):
@@ -288,12 +290,18 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
 
     def abort_dm_stream(self):
         self.draft_text = ""
+        self._dm_streaming = False
         self.emit("dm_abort")
 
     def finalize_dm_stream(self, final_text):
         self.draft_text = ""
+        self._dm_streaming = False
         self.emit("dm_done", text=final_text)
         self.emit("history")
+
+    def _finish_player_turn(self):
+        self._dm_streaming = False
+        super()._finish_player_turn()
 
     def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd"):
         self.last_scene = {
@@ -429,8 +437,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "history_total": total,
             "notices": list(self.notices),
             "rev": self.revision,
-            "streaming": bool(self.processing),
-            "draft": self.draft_text if self.processing else "",
+            "streaming": bool(self._dm_streaming),
+            "draft": self.draft_text if self._dm_streaming else "",
             "fill": self.fill_view(),
             "status": self.status_view(),
             "memory": self.memory_view(),

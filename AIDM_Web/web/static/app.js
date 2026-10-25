@@ -16,6 +16,10 @@ let revision = 0;
 let settingsCache = null;
 let loadingOlder = false;
 let pollTimer = 0;
+let pendingPlayer = "";
+let awaitingSettle = false;
+let settleOnce = false;
+let draftClosed = true;
 
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
@@ -196,6 +200,7 @@ function renderLog(mode = "end", draftOverride) {
 }
 
 function ensureDraft() {
+  if (draftClosed) return null;
   let draft = document.querySelector("#draft");
   if (draft) return draft;
   drafting = true;
@@ -343,7 +348,14 @@ function setWorldsOpen(open) {
 
 function applySnapshot(snap, mode = "end") {
   if (!snap) return;
-  if (typeof snap.rev === "number" && snap.rev < revision) return;
+  if (typeof snap.rev === "number" && snap.rev < revision) {
+    if (awaitingSettle) scheduleSettle();
+    return;
+  }
+  if (pendingPlayer && !snapshotHasPlayer(snap, pendingPlayer)) {
+    if (awaitingSettle) scheduleSettle();
+    return;
+  }
   const domDraft = document.querySelector("#draft")?.textContent || "";
   const serverDraft = snap.draft || "";
   const draftDrift = Boolean(snap.streaming) && domDraft !== serverDraft;
@@ -358,6 +370,12 @@ function applySnapshot(snap, mode = "end") {
   if (typeof snap.rev === "number") revision = snap.rev;
   state = snap;
   drafting = Boolean(snap.streaming);
+  draftClosed = !snap.streaming;
+  if (!snap.streaming) {
+    awaitingSettle = false;
+    pendingPlayer = "";
+    settleOnce = false;
+  }
   settleFresh(snap);
   paintWorlds();
   paintModels();
@@ -368,14 +386,32 @@ function applySnapshot(snap, mode = "end") {
   if (mode === "end" || !unchanged) renderLog(mode);
 }
 
+function snapshotHasPlayer(snap, text) {
+  return (snap.history || []).some((row) => row.kind === "player" && row.text === text);
+}
+
+function scheduleSettle() {
+  if (settleOnce || !awaitingSettle) return;
+  settleOnce = true;
+  window.setTimeout(() => {
+    if (awaitingSettle) refresh("end");
+  }, 50);
+}
+
+function beginTurn() {
+  awaitingSettle = true;
+  settleOnce = false;
+  syncPolling();
+}
+
 async function refresh(mode = "end") {
   const start = mode === "keep" && state && Number.isInteger(state.history_from) ? `?start=${state.history_from}` : "";
   applySnapshot(await api(`/api/state${start}`), mode);
 }
 
 function syncPolling() {
-  const busy = document.body.classList.contains("busy");
-  if (busy) {
+  const keep = document.body.classList.contains("busy") || awaitingSettle;
+  if (keep) {
     if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow"), 2000);
   } else if (pollTimer) {
     window.clearInterval(pollTimer);
@@ -418,12 +454,18 @@ function connectEvents() {
     if (typeof event.rev === "number") revision = event.rev;
     if (event.kind === "dm_start") {
       drafting = true;
+      draftClosed = false;
+      awaitingSettle = true;
+      settleOnce = false;
       noteFreshReply();
       if (state) state.streaming = true;
+      syncPolling();
       renderLog("end");
     } else if (event.kind === "dm_delta") {
+      if (draftClosed) return;
       const follow = nearBottom();
       const draft = ensureDraft();
+      if (!draft) return;
       const next = typeof event.full === "string" ? event.full : `${draft.textContent}${event.text || ""}`;
       if (next.length >= draft.textContent.length) {
         draft.textContent = next;
@@ -452,6 +494,7 @@ function connectEvents() {
       if (box) box.value = event.text;
     } else if (event.kind === "dm_done" || event.kind === "dm_abort") {
       drafting = false;
+      draftClosed = true;
       if (state) {
         state.streaming = false;
         state.draft = "";
@@ -508,6 +551,8 @@ document.querySelector("#next-close").addEventListener("click", () => nextDialog
 document.querySelector("#next-cancel").addEventListener("click", () => nextDialog.close());
 function showPlayerLine(text) {
   if (!text || !state) return;
+  beginTurn();
+  pendingPlayer = text;
   const last = state.history.at(-1);
   if (last && last.kind === "player" && last.text === text) return;
   const index = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
@@ -517,12 +562,24 @@ function showPlayerLine(text) {
 }
 
 function retractPlayerLine(text) {
-  if (!text || !state) return;
+  if (!text || !state) {
+    releaseTurn();
+    return;
+  }
   const last = state.history.at(-1);
-  if (!last || last.kind !== "player" || last.text !== text) return;
-  state.history.pop();
-  if (Number.isInteger(state.history_total)) state.history_total -= 1;
-  renderLog("end");
+  const shown = last && last.kind === "player" && last.text === text;
+  if (shown) {
+    state.history.pop();
+    if (Number.isInteger(state.history_total)) state.history_total -= 1;
+    renderLog("end");
+  }
+  releaseTurn();
+}
+
+function releaseTurn() {
+  pendingPlayer = "";
+  awaitingSettle = false;
+  syncPolling();
 }
 
 document.querySelector("#next-form").addEventListener("submit", async (event) => {
@@ -556,6 +613,7 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
   const text = actionEl.value.trim();
   actionEl.value = "";
   if (text) showPlayerLine(text);
+  else beginTurn();
   try {
     await api("/api/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     document.body.classList.remove("writing");
