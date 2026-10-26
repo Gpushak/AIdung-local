@@ -64,11 +64,33 @@ from dungeon.storage import (
     save_history,
     save_summary_cursor,
     save_world_files,
+    save_world_language,
+    world_entries,
 )
 
 
+def _scale_langs(raw):
+    """Масштаб одного языка или старое число, снятое русской пробой."""
+    langs = {}
+    if isinstance(raw, dict):
+        pairs = raw.items()
+    else:
+        pairs = (("ru", raw),)
+    for lang, scale in pairs:
+        code = "en" if str(lang or "").lower().startswith("en") else "ru" if str(lang or "").lower().startswith("ru") else ""
+        if not code:
+            continue
+        try:
+            value = float(scale)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            langs[code] = value
+    return langs
+
+
 def _scale_table(raw):
-    """Масштаб токенов по виду счётчика и имени модели."""
+    """Масштаб токенов по виду счётчика, модели и языку текста."""
     table = {}
     if not isinstance(raw, dict):
         return table
@@ -79,13 +101,9 @@ def _scale_table(raw):
         for name, scale in models.items():
             if not isinstance(name, str) or not name:
                 continue
-            try:
-                value = float(scale)
-            except (TypeError, ValueError):
-                continue
-            if value <= 0:
-                continue
-            bucket[name] = value
+            langs = _scale_langs(scale)
+            if langs:
+                bucket[name] = langs
         if bucket:
             table[kind] = bucket
     return table
@@ -201,7 +219,9 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         except (TypeError, ValueError):
             legacy_scale = 1.0
         if saved_scale_model and saved_counter and abs(legacy_scale - 1.0) > 0.001:
-            self.token_scales.setdefault(saved_counter, {}).setdefault(saved_scale_model, legacy_scale)
+            models = self.token_scales.setdefault(saved_counter, {})
+            if saved_scale_model not in models:
+                models[saved_scale_model] = {"ru": legacy_scale}
         self._restore_token_scale(self.model)
         self.active_api_preset = settings.get("active_api_preset", "")
         self.api_presets = settings.get("api_presets", [])
@@ -430,7 +450,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             start = max(0, min(int(start), total))
         return {
             "world": self.world_name,
-            "worlds": get_world_list(),
+            "worlds": world_entries(),
             "language": self.language,
             "history": self.history_rows(start, total),
             "history_from": start,
@@ -503,6 +523,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         world_path = BASE_DIR / world_name
         if not world_path.exists():
             raise FileNotFoundError(world_name)
+        previous_lang = self._count_language()
         try:
             _files, loaded_history, restored = load_world_config(world_name)
         except CorruptedDataError as exc:
@@ -525,26 +546,50 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         if restored:
             self.add_system_message(self.tr("msg.history_restored"))
         self.add_system_message(self.tr("msg.world_loaded", name=world_name))
+        self._switch_count_language(previous_lang)
         self.update_memory_label()
         self.update_context_indicator()
         self.emit("history")
 
-    def _remember_token_scale(self, model=None):
-        """Запоминает уже измеренный масштаб за названной моделью."""
-        name = self.model if model is None else model
-        name = str(name or "")
+    def _remember_token_scale(self, model=None, lang=None):
+        """Запоминает уже измеренный масштаб за моделью и языком текста."""
+        name = str(self.model if model is None else model or "")
+        language = normalize_lang(self._count_language() if lang is None else lang)
         if not name or not model_scale_observed():
             return
-        self.token_scales.setdefault(counter_kind(), {})[name] = model_token_scale()
+        bucket = self.token_scales.setdefault(counter_kind(), {})
+        slot = bucket.get(name)
+        if not isinstance(slot, dict):
+            slot = {}
+            bucket[name] = slot
+        slot[language] = model_token_scale()
 
-    def _restore_token_scale(self, model):
-        """Возвращает сохранённый масштаб. False, если эту модель ещё не сверяли."""
+    def _restore_token_scale(self, model, lang=None):
+        """Возвращает сохранённый масштаб. False, если эту пару ещё не сверяли."""
+        language = normalize_lang(self._count_language() if lang is None else lang)
         saved = self.token_scales.get(counter_kind(), {}).get(str(model or ""))
-        if saved is None:
+        value = None
+        if isinstance(saved, dict):
+            value = saved.get(language)
+        elif isinstance(saved, (int, float)) and language == "ru":
+            value = float(saved)
+        if value is None:
             set_model_token_scale(1.0)
             return False
-        set_model_token_scale(saved)
+        set_model_token_scale(value)
         return model_scale_observed()
+
+    def _switch_count_language(self, previous_lang):
+        """Берёт масштаб языка мира. Русская поправка не применяется к английскому тексту."""
+        previous = normalize_lang(previous_lang)
+        current = self._count_language()
+        if previous == current:
+            return
+        self._remember_token_scale(lang=previous)
+        if self._restore_token_scale(self.model, current):
+            return
+        self._calibrate_token_scale()
+        self._remember_token_scale()
 
     def _switch_model_scale(self, previous_model):
         """Перед перерисовкой шкалы берёт масштаб новой модели, а не сырой счётчик.
@@ -648,11 +693,11 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                         problems.append({"lang": lang, "key": key, **issues})
         if problems:
             return problems
+        previous_count_lang = self._count_language()
         self.language = language
         self.api_url = str(payload.get("api_url", self.api_url) or "")
         self.api_key = str(payload.get("api_key", self.api_key) or "")
         previous_model = self.model
-        self.model = str(payload.get("model", self.model) or "")
         self.active_api_preset = str(payload.get("active_api_preset", self.active_api_preset) or "")
         self.api_presets = normalize_api_presets(payload.get("api_presets", self.api_presets))
         self.temperature = float(payload.get("temperature", self.temperature))
@@ -672,6 +717,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         style = payload.get("image_prompt_style", self.image_prompt_style)
         self.image_prompt_style = style if style in IMAGE_PROMPT_STYLES else DEFAULT_IMAGE_STYLE
         self.prompt_overrides = set_prompt_overrides(overrides)
+        self._switch_count_language(previous_count_lang)
+        self.model = str(payload.get("model", self.model) or "")
         self._switch_model_scale(previous_model)
         self.save_settings()
         self.update_context_indicator()
@@ -813,6 +860,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "dialog.bad_name_msg",
             "world_file.story_cards",
             "no_worlds",
+            "worlds.lang.ru",
+            "worlds.lang.en",
             "status.generating",
             "status.summary",
             "status.memory",
@@ -1034,6 +1083,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                 if fname in files:
                     content[fname] = str(files[fname])
         save_world_files(world_path, content)
+        save_world_language(world_path, self.language)
         card_data = cards if isinstance(cards, dict) else default_story_cards(self.language)
         save_story_cards(world_path, card_data)
         intro = str(content.get(INTRODUCTION_FILE, "")).strip()

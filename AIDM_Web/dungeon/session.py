@@ -23,7 +23,7 @@ from .memory import (
     sync_memory_bank_after_undo,
 )
 
-from .story_cards import load_story_cards
+from .tokens import set_model_token_scale
 
 from .storage import (
     CorruptedDataError,
@@ -101,6 +101,7 @@ class SessionMixin(SharedTurnMixin):
         world_path = BASE_DIR / world_name
         if not world_path.exists():
             return
+        previous_lang = self._count_language()
 
         # Сначала читаем и проверяем данные, и только потом меняем состояние:
         # при повреждённом файле текущий мир должен остаться нетронутым.
@@ -115,6 +116,8 @@ class SessionMixin(SharedTurnMixin):
 
         self.current_world_path = world_path
         self.world_name = world_name
+        if self._count_language() != previous_lang:
+            set_model_token_scale(1.0)
         self.last_sent_prompt = None
         self.history = ensure_introduction_in_history(world_path, loaded_history)
         if self.history != loaded_history:
@@ -133,7 +136,13 @@ class SessionMixin(SharedTurnMixin):
         self.update_context_indicator()
 
         self.refresh_world_combobox()
-        self.world_var.set(self.world_name)
+        if hasattr(self, "world_var"):
+            label = next(
+                (item for item, name in getattr(self, "_world_by_label", {}).items() if name == self.world_name),
+                "",
+            )
+            if label:
+                self.world_var.set(label)
 
     def undo_action(self):
         if self.is_busy() or not self.history or not self.current_world_path:

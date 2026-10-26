@@ -125,9 +125,38 @@ body {
 }
 
 #world-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#world-current .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lang-mark {
+  flex: 0 0 auto;
+  color: var(--gold);
+  font: 11px "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.pop-label {
+  margin: 8px 10px 2px;
+  color: var(--muted);
+  font: 11px "Segoe UI", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pop button.world-item {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
 }
 
 header {
@@ -333,8 +362,22 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
 .file-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .section { margin: 16px 0 4px; color: var(--gold); font-size: 14px; }
 .card-list, .world-list, .prompt-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-.card-list button, .world-list button, .prompt-list button {
+.card-list button, .prompt-list button {
   display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.world-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   background: transparent;

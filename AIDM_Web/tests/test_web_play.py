@@ -86,7 +86,11 @@ def test_worlds_files_and_toggles():
         assert client.post("/api/worlds", json={"name": "Другой"}).status_code == 200
         removed = client.delete("/api/worlds/Другой")
         assert removed.status_code == 200
-        assert "Другой" not in client.get("/api/worlds").json()["worlds"]
+        names = [
+            item["name"] if isinstance(item, dict) else item
+            for item in client.get("/api/worlds").json()["worlds"]
+        ]
+        assert "Другой" not in names
         assert client.delete("/api/worlds/нет такого").status_code == 404
     print("OK  миры, вступление и переключатели суммаризации и памяти")
 

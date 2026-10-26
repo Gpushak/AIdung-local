@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=7" in page.text
+        assert "app.js?v=8" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -813,6 +813,89 @@ def test_finished_reply_is_settled_before_processing_ends():
     print("OK  финал хода закрывает черновик до конца обработки")
 
 
+def test_world_language_marks_and_english_token_scale():
+    """Русский и английский миры помечены отдельно, и у английского свой масштаб."""
+    import re
+    import tempfile
+
+    import dungeon.tokens as tokens
+    from dungeon.storage import read_world_language
+    from dungeon.tokens import calibration_sample, model_token_scale, raw_count_tokens, set_model_token_scale
+
+    english = calibration_sample("en")
+    assert raw_count_tokens(english) >= 1000
+    assert raw_count_tokens(calibration_sample("ru")) >= 1000
+    assert not re.search(r"[а-яёА-ЯЁ]", english)
+
+    class _CharEncoder:
+        def encode(self, text, disallowed_special=()):
+            return [1] * max(1, len(text))
+
+    tokens._TOKENIZER = _CharEncoder()
+    tokens._TOKENIZER_LOADED = True
+    tokens._TOKENIZER_IS_TARGET = False
+    try:
+        latin = "The road led across a dark field toward a distant fire. "
+        cyrillic = "Ночь была тихой, и дорога вела через тёмное поле. "
+        assert tokens.raw_count_tokens(latin) == len(latin)
+        assert tokens.raw_count_tokens(cyrillic) < len(cyrillic)
+    finally:
+        tokens._TOKENIZER = None
+        tokens._TOKENIZER_LOADED = False
+        tokens._TOKENIZER_IS_TARGET = False
+
+    set_model_token_scale(1.0)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+            assert (tmp / "Camp" / "language.txt").read_text(encoding="utf-8").strip() == "ru"
+            shore = tmp / "Shore"
+            shore.mkdir()
+            (shore / "introduction.txt").write_text("A quiet harbor at dawn.", encoding="utf-8")
+            assert read_world_language(shore) == "en"
+            session.model = "alpha"
+            set_model_token_scale(0.75)
+            session._remember_token_scale()
+            calls = []
+
+            class _UsageResponse(_Response):
+                def __init__(self, usage):
+                    self._usage = usage
+
+                def json(self):
+                    return {"usage": self._usage}
+
+            def post(payload, **_kwargs):
+                text = payload["messages"][0]["content"]
+                calls.append(text)
+                assert "Ночь" not in text
+                raw = raw_count_tokens(text)
+                return _UsageResponse({"prompt_tokens": int(raw * 0.9)})
+
+            session._api_post = post
+            session.language = "en"
+            assert client.post("/api/worlds", json={"name": "Harbor"}).status_code == 200
+            assert (tmp / "Harbor" / "language.txt").read_text(encoding="utf-8").strip() == "en"
+            assert len(calls) == 1
+            assert calls[0].startswith("The night was quiet")
+            assert model_token_scale() > 0.9
+            assert abs(model_token_scale() - 0.75) > 0.05
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 200
+            assert len(calls) == 1
+            assert abs(model_token_scale() - 0.75) < 0.001
+            worlds = client.get("/api/worlds").json()["worlds"]
+            assert [item["name"] for item in worlds] == ["Camp", "Harbor", "Shore"]
+            assert [item["language"] for item in worlds] == ["ru", "en", "en"]
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  миры помечены языком, английский масштаб не берётся из русской пробы")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -831,4 +914,5 @@ if __name__ == "__main__":
     test_preset_switch_updates_connection()
     test_model_switch_keeps_summary_bar_scaled()
     test_finished_reply_is_settled_before_processing_ends()
+    test_world_language_marks_and_english_token_scale()
     print("ALL WEB TESTS PASSED")

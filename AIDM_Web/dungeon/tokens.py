@@ -132,13 +132,21 @@ def counter_kind() -> str:
     return "cl100k"
 
 
-# Длинная русская фраза: на коротком тексте шаблон чата перевешивает сам текст.
-_CALIBRATION_UNIT = "Ночь была тихой, и дорога вела через тёмное поле к дальнему огню. "
+# Длинная фраза на языке мира: на коротком тексте шаблон чата перевешивает сам текст.
+_CALIBRATION_UNIT = {
+    "ru": "Ночь была тихой, и дорога вела через тёмное поле к дальнему огню. ",
+    "en": "The night was quiet, and the road led across a dark field toward a distant fire. ",
+}
 
 
-def calibration_sample() -> str:
-    """Текст для пробного запроса перед первым ходом. Не короче 1000 локальных токенов."""
-    return _CALIBRATION_UNIT * 80
+def calibration_sample(language="ru") -> str:
+    """Текст пробного запроса перед первым ходом. Не короче 1000 локальных токенов.
+
+    Русская и английская пробы считаются отдельно: поправка на кириллицу
+    не должна уменьшать оценку английского текста.
+    """
+    lang = "en" if str(language or "ru").lower().startswith("en") else "ru"
+    return _CALIBRATION_UNIT[lang] * 80
 
 
 def set_model_token_scale(scale: float) -> None:

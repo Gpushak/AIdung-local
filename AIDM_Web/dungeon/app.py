@@ -3,6 +3,7 @@ import customtkinter as ctk
 import tkinter as tk
 
 from .config import (
+    BASE_DIR,
     COLORS,
     DEFAULT_IMAGE_STYLE,
     STORY_CARDS_KEY,
@@ -20,6 +21,7 @@ from .tokens import format_token_count
 from .storage import (
     get_world_list,
     load_global_settings,
+    read_world_language,
     save_global_settings,
     save_history,
 )
@@ -152,26 +154,36 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
         )
 
     def refresh_world_combobox(self):
-        worlds = get_world_list()
-        if not worlds:
-            worlds = [self.tr("no_worlds")]
+        names = get_world_list()
+        self._world_by_label = {}
+        labels = []
+        for name in names:
+            lang = read_world_language(BASE_DIR / name)
+            label = f"{name}  ·  {lang.upper()}" if lang in ("ru", "en") else name
+            self._world_by_label[label] = name
+            labels.append(label)
+        if not labels:
+            labels = [self.tr("no_worlds")]
 
-        self.world_combobox.configure(values=worlds)
+        self.world_combobox.configure(values=labels)
+        current = ""
+        if self.world_name:
+            current = next((label for label, name in self._world_by_label.items() if name == self.world_name), "")
 
-        if self.world_name and self.world_name in worlds:
-            self.world_var.set(self.world_name)
-        elif worlds and worlds[0] != self.tr("no_worlds"):
-            first_world = worlds[0]
-            self.world_var.set(first_world)
-            self.load_world(first_world)
+        if current:
+            self.world_var.set(current)
+        elif labels and labels[0] != self.tr("no_worlds"):
+            self.world_var.set(labels[0])
+            self.load_world(self._world_by_label[labels[0]])
         else:
             self.world_var.set(self.tr("no_worlds"))
 
     def on_world_selected(self, selected):
-        if selected and selected != self.tr("no_worlds") and selected != self.world_name:
+        name = getattr(self, "_world_by_label", {}).get(selected, selected)
+        if name and name != self.tr("no_worlds") and name != self.world_name:
             if self.current_world_path:
                 save_history(self.current_world_path, self.history)
-            self.load_world(selected)
+            self.load_world(name)
 
     def create_widgets(self):
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")

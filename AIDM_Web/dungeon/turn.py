@@ -3,8 +3,8 @@ from datetime import datetime
 import requests
 
 from .api_stream import ACTION, DeltaBatcher
-from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
-from .storage import save_history
+from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, normalize_lang, t
+from .storage import read_world_language, save_history
 from .text_utils import StreamThinkFilter, clean_dm_response, clean_stream_chunk
 from .tokens import (
     calibration_sample,
@@ -32,7 +32,7 @@ class TurnMixin:
             return
         self._calibrating_scale = True
         try:
-            sample = calibration_sample()
+            sample = calibration_sample(self._count_language())
             raw = raw_count_tokens(sample)
             payload = self._api_payload(
                 messages=[{"role": "user", "content": sample}],
@@ -51,6 +51,15 @@ class TurnMixin:
                 self.save_settings()
         finally:
             self._calibrating_scale = False
+
+    def _count_language(self):
+        """Язык текста, по которому сверяем масштаб: язык мира, иначе язык интерфейса."""
+        path = getattr(self, "current_world_path", None)
+        if path:
+            lang = read_world_language(path)
+            if lang:
+                return lang
+        return normalize_lang(getattr(self, "language", "ru"))
 
     def process_action(self, user_input="", direction_hint=None):
         self._last_api_usage = None

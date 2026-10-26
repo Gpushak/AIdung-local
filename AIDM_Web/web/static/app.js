@@ -299,27 +299,62 @@ function setModelsOpen(open) {
   toggle.closest(".models").classList.toggle("open", open);
 }
 
+function worldItems(list) {
+  return (list || []).map((item) => (
+    item && typeof item === "object"
+      ? { name: item.name || "", language: item.language || "" }
+      : { name: String(item || ""), language: "" }
+  )).filter((item) => item.name);
+}
+
+function appendLangMark(parent, language) {
+  if (language !== "ru" && language !== "en") return;
+  const mark = document.createElement("small");
+  mark.className = "lang-mark";
+  mark.textContent = language.toUpperCase();
+  parent.append(mark);
+}
+
 function paintWorlds() {
   const menu = document.querySelector("#world-menu");
   const current = document.querySelector("#world-current");
-  const names = (state && state.worlds) || [];
-  const active = state && names.includes(state.world) ? state.world : "";
-  current.textContent = active || t("no_worlds");
+  const items = worldItems(state && state.worlds);
+  const activeItem = items.find((item) => item.name === (state && state.world)) || null;
+  const active = activeItem ? activeItem.name : "";
+  current.replaceChildren();
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = active || t("no_worlds");
+  current.append(name);
+  if (activeItem) appendLangMark(current, activeItem.language);
   menu.replaceChildren();
-  if (!names.length) {
+  if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "pop-empty";
     empty.textContent = t("no_worlds");
     menu.append(empty);
     return;
   }
-  for (const name of names) {
+  const groups = new Set(items.map((item) => item.language).filter(Boolean));
+  let previous = null;
+  for (const item of items) {
+    if (groups.size > 1 && item.language && item.language !== previous) {
+      const label = document.createElement("p");
+      label.className = "pop-label";
+      label.textContent = t(`worlds.lang.${item.language}`);
+      menu.append(label);
+      previous = item.language;
+    }
     const button = document.createElement("button");
     button.type = "button";
+    button.className = "world-item";
     button.setAttribute("role", "menuitemradio");
-    button.setAttribute("aria-checked", name === active ? "true" : "false");
-    button.textContent = name;
-    button.addEventListener("click", () => openWorld(name));
+    button.setAttribute("aria-checked", item.name === active ? "true" : "false");
+    const title = document.createElement("span");
+    title.textContent = item.name;
+    button.append(title);
+    appendLangMark(button, item.language);
+    button.addEventListener("click", () => openWorld(item.name));
     menu.append(button);
   }
 }
@@ -969,21 +1004,34 @@ async function renderWorlds() {
   panelTitle.textContent = t("btn.worlds");
   panelBody.innerHTML = "";
   const data = await api("/api/worlds");
-  let selected = data.current || (data.worlds || [])[0] || "";
+  const items = worldItems(data.worlds);
+  let selected = data.current || (items[0] && items[0].name) || "";
   const heading = document.createElement("p");
   heading.className = "section";
   heading.textContent = t("dialog.your_worlds");
   const list = document.createElement("div");
   list.className = "world-list";
   function draw() {
-    list.innerHTML = "";
-    for (const name of data.worlds || []) {
+    list.replaceChildren();
+    const groups = new Set(items.map((item) => item.language).filter(Boolean));
+    let previous = null;
+    for (const item of items) {
+      if (groups.size > 1 && item.language && item.language !== previous) {
+        const label = document.createElement("p");
+        label.className = "section";
+        label.textContent = t(`worlds.lang.${item.language}`);
+        list.append(label);
+        previous = item.language;
+      }
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = name;
-      button.setAttribute("aria-pressed", name === selected ? "true" : "false");
+      const title = document.createElement("span");
+      title.textContent = item.name;
+      button.append(title);
+      appendLangMark(button, item.language);
+      button.setAttribute("aria-pressed", item.name === selected ? "true" : "false");
       button.addEventListener("click", () => {
-        selected = name;
+        selected = item.name;
         draw();
       });
       list.append(button);
