@@ -137,6 +137,10 @@ TRANSLATIONS = {
         "prompt_name.scene_style.midjourney": "Стиль Midjourney",
         "prompt_name.scene_style.flux": "Стиль Flux",
         "prompt_name.scene_style.generic": "Универсальный стиль",
+        "prompt_name.scene_look.anime": "Стиль: аниме",
+        "prompt_name.scene_look.realism": "Стиль: реализм",
+        "prompt_name.scene_look.painting": "Стиль: живопись",
+        "prompt_name.scene_look.cinematic": "Стиль: кино",
         "btn.reset_prompt": "Сбросить",
         "dialog.api_config": "Конфигурация API",
         "dialog.manual_preset": "— Вручную —",
@@ -156,15 +160,22 @@ TRANSLATIONS = {
         "dialog.memory_bank": "Банк памяти",
         "dialog.temperature": "Температура (0.0 - 2.0):",
         "dialog.max_tokens": "Макс. токенов в ответе:",
+        "dialog.response_limit": "Макс. токенов в ответе этого промпта:",
         "dialog.context_size": "Размер контекста:",
         "dialog.summary_fill": "Автосуммаризация при заполнении (%):",
         "dialog.memory_every": "Банк памяти (индексация каждые N ходов):",
         "dialog.memory_top_k": "Макс. воспоминаний в промпте:",
         "dialog.image_style": "Формат промпта для изображений:",
+        "dialog.image_look": "Стиль изображения:",
         "image_style.sd": "Stable Diffusion (теги, веса)",
         "image_style.midjourney": "Midjourney (--параметры)",
         "image_style.flux": "Flux (естественный текст)",
         "image_style.generic": "Универсальный (текст)",
+        "image_look.none": "Без стиля",
+        "image_look.anime": "Аниме",
+        "image_look.realism": "Реализм",
+        "image_look.painting": "Живопись",
+        "image_look.cinematic": "Кино",
         "dialog.language": "Язык интерфейса:",
         "dialog.quit": "Выход",
         "dialog.quit_q": "Действительно выйти из игры?",
@@ -203,6 +214,8 @@ TRANSLATIONS = {
         "cards.enter_title_first": "Сначала введите название карточки",
         "scene.prompt_label": "Промпт",
         "scene.negative_label": "Антипромпт",
+        "scene.format": "Формат модели",
+        "scene.look": "Стиль",
         "scene.copy_prompt": "Копировать промпт",
         "scene.copy_negative": "Копировать антипромпт",
         "scene.copied_prompt": "Промпт сцены скопирован.",
@@ -366,6 +379,16 @@ TRANSLATIONS = {
 ФОРМАТ: связное описание на английском языке, 2-4 предложения. Описывай только то, что видно: персонажей (внешность, одежду, позы), окружение, время суток, освещение, стиль, настроение, ракурс и композицию. Не используй теги через запятую и веса в скобках.
 
 Анти-промпт — отдельное связное предложение, описывающее, чего не должно быть на изображении. Не включай в него NSFW и насилие.""",
+        "prompt.scene_look.anime": """СТИЛЬ ИЗОБРАЖЕНИЯ: аниме.
+Впиши это описание стиля в поле prompt, в том же формате, что и остальной промпт: anime style, cel shading, clean lineart, expressive eyes, vibrant colors.
+Не делай сцену фотореалистичной.""",
+        "prompt.scene_look.realism": """СТИЛЬ ИЗОБРАЖЕНИЯ: реализм.
+Впиши это описание стиля в поле prompt, в том же формате, что и остальной промпт: photorealistic, realistic skin, natural lighting, lifelike proportions, detailed materials.
+Не используй аниме, мультяшность и рисованный контур.""",
+        "prompt.scene_look.painting": """СТИЛЬ ИЗОБРАЖЕНИЯ: живопись.
+Впиши это описание стиля в поле prompt, в том же формате, что и остальной промпт: oil painting, visible brushstrokes, painterly light, fine art.""",
+        "prompt.scene_look.cinematic": """СТИЛЬ ИЗОБРАЖЕНИЯ: кино.
+Впиши это описание стиля в поле prompt, в том же формате, что и остальной промпт: cinematic still, dramatic lighting, shallow depth of field, film color grade.""",
     },
     "en": {
         "lang.ru": "Русский",
@@ -499,6 +522,10 @@ TRANSLATIONS = {
         "prompt_name.scene_style.midjourney": "Midjourney style",
         "prompt_name.scene_style.flux": "Flux style",
         "prompt_name.scene_style.generic": "Generic style",
+        "prompt_name.scene_look.anime": "Look: anime",
+        "prompt_name.scene_look.realism": "Look: realism",
+        "prompt_name.scene_look.painting": "Look: painting",
+        "prompt_name.scene_look.cinematic": "Look: cinematic",
         "btn.reset_prompt": "Reset",
         "dialog.api_config": "API configuration",
         "dialog.manual_preset": "— Manual —",
@@ -518,15 +545,22 @@ TRANSLATIONS = {
         "dialog.memory_bank": "Memory bank",
         "dialog.temperature": "Temperature (0.0 - 2.0):",
         "dialog.max_tokens": "Max response tokens:",
+        "dialog.response_limit": "Max tokens for this prompt's reply:",
         "dialog.context_size": "Context size:",
         "dialog.summary_fill": "Auto-summary when this full (%):",
         "dialog.memory_every": "Memory bank (index every N turns):",
         "dialog.memory_top_k": "Max memories in the prompt:",
         "dialog.image_style": "Image prompt format:",
+        "dialog.image_look": "Image look:",
         "image_style.sd": "Stable Diffusion (tags, weights)",
         "image_style.midjourney": "Midjourney (--parameters)",
         "image_style.flux": "Flux (natural text)",
         "image_style.generic": "Generic (text)",
+        "image_look.none": "No style",
+        "image_look.anime": "Anime",
+        "image_look.realism": "Realism",
+        "image_look.painting": "Painting",
+        "image_look.cinematic": "Cinematic",
         "dialog.language": "Interface language:",
         "dialog.quit": "Quit",
         "dialog.quit_q": "Really quit the game?",
@@ -565,6 +599,8 @@ TRANSLATIONS = {
         "cards.enter_title_first": "Please enter a card title first",
         "scene.prompt_label": "Prompt",
         "scene.negative_label": "Negative prompt",
+        "scene.format": "Model format",
+        "scene.look": "Style",
         "scene.copy_prompt": "Copy prompt",
         "scene.copy_negative": "Copy negative prompt",
         "scene.copied_prompt": "Scene prompt copied.",
@@ -725,6 +761,16 @@ The negative prompt is one separate sentence describing what should not be in th
 FORMAT: 2-4 sentences of natural English. Describe only what is visible: characters (appearance, clothing, poses), environment, time of day, lighting, style, mood, camera angle and composition. Do not use comma-separated tags or parenthesised weights.
 
 The negative prompt is one separate sentence describing what should not be in the image. Do NOT put NSFW or violence in it.""",
+        "prompt.scene_look.anime": """IMAGE LOOK: anime.
+Write this style into the prompt field, in the same format as the rest of the prompt: anime style, cel shading, clean lineart, expressive eyes, vibrant colors.
+Do not make the scene photorealistic.""",
+        "prompt.scene_look.realism": """IMAGE LOOK: realism.
+Write this style into the prompt field, in the same format as the rest of the prompt: photorealistic, realistic skin, natural lighting, lifelike proportions, detailed materials.
+Do not use anime, cartoon, or drawn outlines.""",
+        "prompt.scene_look.painting": """IMAGE LOOK: painting.
+Write this style into the prompt field, in the same format as the rest of the prompt: oil painting, visible brushstrokes, painterly light, fine art.""",
+        "prompt.scene_look.cinematic": """IMAGE LOOK: cinematic.
+Write this style into the prompt field, in the same format as the rest of the prompt: cinematic still, dramatic lighting, shallow depth of field, film color grade.""",
     },
 }
 
@@ -856,6 +902,10 @@ PROMPT_GROUPS = (
             "prompt.scene_style.midjourney",
             "prompt.scene_style.flux",
             "prompt.scene_style.generic",
+            "prompt.scene_look.anime",
+            "prompt.scene_look.realism",
+            "prompt.scene_look.painting",
+            "prompt.scene_look.cinematic",
         ),
     ),
 )

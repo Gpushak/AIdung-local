@@ -5,9 +5,12 @@ import tkinter as tk
 from .config import (
     BASE_DIR,
     COLORS,
+    DEFAULT_IMAGE_LOOK,
     DEFAULT_IMAGE_STYLE,
+    IMAGE_LOOKS,
     STORY_CARDS_KEY,
     WINDOW_SIZE,
+    clamp_response_limits,
 )
 
 from .i18n import (
@@ -60,6 +63,10 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
         self.summary_enabled = settings.get("summary_enabled", True)
         self.memory_enabled = settings.get("memory_enabled", True)
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
+        self.image_look = settings.get("image_look", DEFAULT_IMAGE_LOOK)
+        if self.image_look not in IMAGE_LOOKS:
+            self.image_look = DEFAULT_IMAGE_LOOK
+        self.response_limits = clamp_response_limits(settings.get("response_limits"))
         self.covered_count = 0
         self.context_ratio = 0.0
         self.turns_since_memory = 0
@@ -148,6 +155,8 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
                 "summary_enabled": self.summary_enabled,
                 "memory_enabled": self.memory_enabled,
                 "image_prompt_style": self.image_prompt_style,
+                "image_look": self.image_look,
+                "response_limits": self.response_limits,
                 "language": self.language,
                 "prompt_overrides": self.prompt_overrides,
             }

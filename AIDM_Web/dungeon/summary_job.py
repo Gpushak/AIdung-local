@@ -1,7 +1,7 @@
 from threading import Thread
 
 from .api_stream import SUMMARY
-from .config import INTRODUCTION_FILE, WORLD_FILES
+from .config import INTRODUCTION_FILE, WORLD_FILES, response_token_limit
 from .i18n import localize_history, t
 from .memory import format_memory_block, retrieve_relevant_memories
 from .story_cards import format_story_cards_block, retrieve_relevant_cards
@@ -107,7 +107,7 @@ class SummaryMixin:
             if summary_path.exists()
             else t(self.language, "prompt.none")
         )
-        summary_max_tokens = 1000
+        summary_max_tokens = response_token_limit(getattr(self, "response_limits", None), "prompt.summary")
         compress_note = ""
         if summary_needs_compression(count_tokens(old_summary), summary_max_tokens):
             compress_note = "\n\n" + t(self.language, "prompt.summary_compress")

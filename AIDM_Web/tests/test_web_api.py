@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=8" in page.text
+        assert "app.js?v=10" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -896,6 +896,93 @@ def test_world_language_marks_and_english_token_scale():
     print("OK  миры помечены языком, английский масштаб не берётся из русской пробы")
 
 
+def test_prompt_limits_and_scene_look():
+    import tempfile
+
+    from dungeon.config import apply_image_look
+    from dungeon.i18n import t
+
+    styled = apply_image_look("a knight on a road --ar 16:9 --v 7", "anime")
+    assert styled.index("anime style") < styled.index("--ar")
+    assert apply_image_look(styled, "anime") == styled
+    assert "anime style, cel shading" in t("en", "prompt.scene_look.anime")
+    assert "photorealistic, realistic skin" in t("ru", "prompt.scene_look.realism")
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        view = client.get("/api/settings").json()
+        assert view["response_limits"]["prompt.memory_index"] == 350
+        assert view["response_limits"]["prompt.scene_image"] == 700
+        assert view["response_limits"]["prompt.summary"] == 1000
+        assert view["response_limits"]["prompt.card_desc_gen"] == 400
+        prompts = [item for group in view["prompts"] for item in group["prompts"]]
+        assert next(item for item in prompts if item["key"] == "prompt.memory_index")["limit"] == 350
+        assert "limit" not in next(item for item in prompts if item["key"] == "prompt.continue")
+
+        updated = client.put(
+            "/api/settings",
+            json={"response_limits": {"prompt.memory_index": 120, "prompt.scene_image": 900, "prompt.summary": "нет"}},
+        )
+        assert updated.status_code == 200, updated.text
+        limits = updated.json()["response_limits"]
+        assert limits["prompt.memory_index"] == 120
+        assert limits["prompt.scene_image"] == 900
+        assert limits["prompt.summary"] == 1000
+        assert client.put("/api/settings", json={"response_limits": {"prompt.memory_index": 0}}).json()["response_limits"]["prompt.memory_index"] == 1
+
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        history = ["Игрок: осмотреться", "Мастер: Тропа вывела к реке."]
+        (tmp / "Camp" / "history.json").write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+        assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 200
+        assert session._summary_history_budget()[2] == 1000
+        options = client.put("/api/scene/options", json={"image_prompt_style": "flux", "image_look": "anime"})
+        assert options.status_code == 200, options.text
+        assert options.json()["image_prompt_style"] == "flux"
+        assert options.json()["image_look"] == "anime"
+        calls = []
+
+        def post(payload, **_kwargs):
+            calls.append(payload)
+            return _Response()
+
+        def finish_read(_response, _key, on_delta=None):
+            return '{"prompt": "a river path --ar 16:9", "negative_prompt": "blurry"}', False
+
+        session._api_post = post
+        session._read_response = finish_read
+        session.response_limits["prompt.scene_image"] = 900
+        assert client.post(
+            "/api/scene",
+            json={"image_prompt_style": "midjourney", "image_look": "realism"},
+        ).status_code == 200
+        deadline = time.time() + 3
+        scene = None
+        while time.time() < deadline:
+            scene = client.get("/api/scene").json()["scene"]
+            if scene and scene.get("prompt"):
+                break
+            time.sleep(0.05)
+        assert calls, "промпт сцены не ушёл в модель"
+        sent = calls[-1]["messages"][0]["content"]
+        assert calls[-1]["max_tokens"] == 900
+        assert "СТИЛЬ ИЗОБРАЖЕНИЯ: реализм" in sent
+        assert "photorealistic, realistic skin" in sent
+        assert scene["style"] == "midjourney"
+        assert scene["look"] == "realism"
+        assert "photorealistic, realistic skin" in scene["prompt"]
+        assert scene["prompt"].index("photorealistic") < scene["prompt"].index("--ar")
+        assert scene["negative"] == "blurry"
+        stored = json.loads((tmp / "settings.json").read_text(encoding="utf-8"))
+        assert stored["image_look"] == "realism"
+        assert stored["image_prompt_style"] == "midjourney"
+        assert stored["response_limits"]["prompt.scene_image"] == 900
+    print("OK  лимиты промптов меняются, стиль дописывается в промпт сцены")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -915,4 +1002,5 @@ if __name__ == "__main__":
     test_model_switch_keeps_summary_bar_scaled()
     test_finished_reply_is_settled_before_processing_ends()
     test_world_language_marks_and_english_token_scale()
+    test_prompt_limits_and_scene_look()
     print("ALL WEB TESTS PASSED")

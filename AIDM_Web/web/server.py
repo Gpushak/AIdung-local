@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -294,14 +294,20 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
         return {"prompt": game().prompt_view()}
 
     @app.post("/api/scene")
-    def scene():
+    def scene(payload: dict | None = Body(default=None)):
         if not game().current_world_path or game().is_busy():
             raise HTTPException(409, "busy or no world")
+        if isinstance(payload, dict):
+            game().set_scene_options(payload.get("image_prompt_style"), payload.get("image_look"))
         game().start_scene_prompt()
         return {"ok": True}
 
     @app.get("/api/scene")
     def last_scene():
-        return {"scene": game().last_scene}
+        return game().scene_view()
+
+    @app.put("/api/scene/options")
+    def scene_options(payload: dict):
+        return game().set_scene_options(payload.get("image_prompt_style"), payload.get("image_look"))
 
     return app

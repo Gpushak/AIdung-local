@@ -1263,20 +1263,75 @@ async function renderPrompt() {
 }
 
 async function renderScene(extra) {
-  let scene = extra && extra.prompt ? extra : (await api("/api/scene")).scene;
-  const prompt = document.createElement("textarea");
-  prompt.rows = 8;
-  prompt.readOnly = true;
-  prompt.value = scene ? scene.prompt || "" : "";
-  const negative = document.createElement("textarea");
-  negative.rows = 4;
-  negative.readOnly = true;
-  negative.value = scene ? scene.negative || "" : "";
+  const data = await api("/api/scene");
+  const scene = extra && extra.prompt != null ? extra : data.scene;
+  let style = data.image_prompt_style || "sd";
+  let look = data.image_look || "none";
+
+  function choiceRow(title, values, selected, labelPrefix, onPick) {
+    const headingNode = document.createElement("p");
+    headingNode.className = "section";
+    headingNode.textContent = t(title);
+    const row = document.createElement("div");
+    row.className = "choice-row";
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", t(title));
+    for (const value of values) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = t(`${labelPrefix}.${value}`);
+      button.setAttribute("aria-pressed", value === selected ? "true" : "false");
+      button.addEventListener("click", () => {
+        for (const item of row.querySelectorAll("button")) item.setAttribute("aria-pressed", "false");
+        button.setAttribute("aria-pressed", "true");
+        onPick(value);
+      });
+      row.append(button);
+    }
+    return [headingNode, row];
+  }
+
+  function saveSceneOptions() {
+    api("/api/scene/options", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_prompt_style: style, image_look: look }),
+    }).catch(() => {});
+  }
+
+  function labeledBox(title, rows, value) {
+    const label = document.createElement("label");
+    label.textContent = title;
+    const area = document.createElement("textarea");
+    area.rows = rows;
+    area.readOnly = true;
+    area.value = value || "";
+    label.append(area);
+    return label;
+  }
+
   const button = document.createElement("button");
   button.type = "button";
+  button.className = "primary";
   button.textContent = t("btn.scene_prompt");
-  button.addEventListener("click", () => api("/api/scene", { method: "POST" }));
-  panelBody.append(prompt, negative, button);
+  button.addEventListener("click", () => api("/api/scene", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_prompt_style: style, image_look: look }),
+  }));
+  panelBody.append(
+    ...choiceRow("scene.format", data.image_styles || [], style, "image_style", (value) => {
+      style = value;
+      saveSceneOptions();
+    }),
+    ...choiceRow("scene.look", data.image_looks || [], look, "image_look", (value) => {
+      look = value;
+      saveSceneOptions();
+    }),
+    labeledBox(t("scene.prompt_label"), 8, scene ? scene.prompt : ""),
+    labeledBox(t("scene.negative_label"), 4, scene ? scene.negative : ""),
+    button,
+  );
 }
 
 async function renderSettings() {
@@ -1529,6 +1584,18 @@ async function renderSettings() {
     style.value = settingsCache.image_prompt_style || "";
     style.addEventListener("change", () => { settingsCache.image_prompt_style = style.value; });
     styleLabel.append(style);
+    const lookLabel = document.createElement("label");
+    lookLabel.textContent = t("dialog.image_look");
+    const look = document.createElement("select");
+    for (const name of settingsCache.image_looks || []) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = t(`image_look.${name}`);
+      look.append(option);
+    }
+    look.value = settingsCache.image_look || "none";
+    look.addEventListener("change", () => { settingsCache.image_look = look.value; });
+    lookLabel.append(look);
     box.append(
       heading(t("dialog.gen_params")),
       check(t("dialog.stream"), "stream_mode"),
@@ -1541,6 +1608,7 @@ async function renderSettings() {
       choice(t("dialog.memory_every"), "memory_interval", ["3", "5", "10", "15"]),
       choice(t("dialog.memory_top_k"), "memory_top_k", ["3", "5", "7", "10"]),
       styleLabel,
+      lookLabel,
     );
     return box;
   }
@@ -1550,13 +1618,35 @@ async function renderSettings() {
     list.className = "prompt-list";
     const area = document.createElement("textarea");
     area.rows = 12;
+    const limitWrap = document.createElement("label");
+    limitWrap.textContent = t("dialog.response_limit");
+    limitWrap.hidden = true;
+    limitWrap.style.display = "none";
+    const limitInput = document.createElement("input");
+    limitInput.type = "number";
+    limitInput.min = "1";
+    limitInput.max = "16384";
+    limitInput.step = "1";
+    limitWrap.append(limitInput);
     const lang = settingsCache.language || "ru";
     settingsCache.prompt_overrides = settingsCache.prompt_overrides || { ru: {}, en: {} };
+    settingsCache.response_limits = settingsCache.response_limits || {};
     let selected = null;
     function choose(prompt) {
       selected = prompt;
       area.value = prompt.text;
+      const hasLimit = Number.isFinite(prompt.limit);
+      limitWrap.hidden = !hasLimit;
+      limitWrap.style.display = hasLimit ? "block" : "none";
+      if (!hasLimit) return;
+      const stored = settingsCache.response_limits[prompt.key];
+      limitInput.value = String(stored != null ? stored : prompt.limit);
     }
+    limitInput.addEventListener("input", () => {
+      if (!selected || limitWrap.hidden) return;
+      const value = Number(limitInput.value);
+      if (Number.isFinite(value)) settingsCache.response_limits[selected.key] = value;
+    });
     for (const group of settingsCache.prompts || []) {
       const title = document.createElement("p");
       title.textContent = group.title;
@@ -1584,7 +1674,7 @@ async function renderSettings() {
       selected.text = selected.builtin;
       settingsCache.prompt_overrides[lang][selected.key] = "";
     });
-    box.append(list, area, reset);
+    box.append(list, area, limitWrap, reset);
     return box;
   }
 }

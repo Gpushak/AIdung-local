@@ -12,10 +12,14 @@ from dungeon.ai_engine import ACTION, CARDS, AIEngineMixin
 from dungeon.session import SharedTurnMixin
 from dungeon.config import (
     BASE_DIR,
+    DEFAULT_IMAGE_LOOK,
     DEFAULT_IMAGE_STYLE,
+    DEFAULT_RESPONSE_LIMITS,
+    IMAGE_LOOKS,
     IMAGE_PROMPT_STYLES,
     INTRODUCTION_FILE,
     WORLD_FILES,
+    clamp_response_limits,
 )
 from dungeon.i18n import (
     DM_PREFIX,
@@ -238,6 +242,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         mode = settings.get("bind_mode")
         self.bind_mode = mode if mode in ("local", "lan", "tailscale") else ("lan" if self.lan_access else "local")
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
+        self.image_look = settings.get("image_look", DEFAULT_IMAGE_LOOK)
+        if self.image_look not in IMAGE_LOOKS:
+            self.image_look = DEFAULT_IMAGE_LOOK
+        self.response_limits = clamp_response_limits(settings.get("response_limits"))
         self.covered_count = 0
         self.context_ratio = 0.0
         self.context_tokens = 0
@@ -323,13 +331,36 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self._dm_streaming = False
         super()._finish_player_turn()
 
-    def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd"):
+    def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd", look="none"):
         self.last_scene = {
             "prompt": scene_prompt,
             "negative": negative_prompt,
             "style": style,
+            "look": look,
         }
         self.emit("scene", **self.last_scene)
+
+    def scene_view(self):
+        return {
+            "scene": self.last_scene,
+            "image_prompt_style": self.image_prompt_style,
+            "image_styles": list(IMAGE_PROMPT_STYLES),
+            "image_look": self.image_look,
+            "image_looks": list(IMAGE_LOOKS),
+        }
+
+    def set_scene_options(self, style=None, look=None):
+        """Запоминает формат модели и визуальный стиль, выбранные на вкладке сцены."""
+        changed = False
+        if style in IMAGE_PROMPT_STYLES and style != self.image_prompt_style:
+            self.image_prompt_style = style
+            changed = True
+        if look in IMAGE_LOOKS and look != self.image_look:
+            self.image_look = look
+            changed = True
+        if changed:
+            self.save_settings()
+        return self.scene_view()
 
     def refresh_busy_state(self):
         self.emit("status", **self.status_view())
@@ -626,6 +657,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                 "summary_enabled": self.summary_enabled,
                 "memory_enabled": self.memory_enabled,
                 "image_prompt_style": self.image_prompt_style,
+                "image_look": self.image_look,
+                "response_limits": self.response_limits,
                 "language": self.language,
                 "prompt_overrides": self.prompt_overrides,
                 "lan_access": self.lan_access,
@@ -644,15 +677,16 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             for key in keys:
                 override = self.prompt_overrides.get(self.language, {}).get(key, "")
                 builtin = builtin_prompt(self.language, key)
-                prompts.append(
-                    {
-                        "key": key,
-                        "name": self.tr("prompt_name." + key[len("prompt.") :]),
-                        "text": override if isinstance(override, str) and override.strip() else builtin,
-                        "builtin": builtin,
-                        "override": override,
-                    }
-                )
+                item = {
+                    "key": key,
+                    "name": self.tr("prompt_name." + key[len("prompt.") :]),
+                    "text": override if isinstance(override, str) and override.strip() else builtin,
+                    "builtin": builtin,
+                    "override": override,
+                }
+                if key in DEFAULT_RESPONSE_LIMITS:
+                    item["limit"] = self.response_limits.get(key, DEFAULT_RESPONSE_LIMITS[key])
+                prompts.append(item)
             groups.append({"title": self.tr(group_key), "prompts": prompts})
         return {
             "api_url": self.api_url,
@@ -671,6 +705,9 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "memory_enabled": self.memory_enabled,
             "image_prompt_style": self.image_prompt_style,
             "image_styles": list(IMAGE_PROMPT_STYLES),
+            "image_look": self.image_look,
+            "image_looks": list(IMAGE_LOOKS),
+            "response_limits": dict(self.response_limits),
             "language": self.language,
             "lan_access": self.lan_access,
             "bind_mode": self.bind_mode,
@@ -716,6 +753,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             self.bind_mode = "lan"
         style = payload.get("image_prompt_style", self.image_prompt_style)
         self.image_prompt_style = style if style in IMAGE_PROMPT_STYLES else DEFAULT_IMAGE_STYLE
+        look = payload.get("image_look", self.image_look)
+        self.image_look = look if look in IMAGE_LOOKS else DEFAULT_IMAGE_LOOK
+        if "response_limits" in payload:
+            self.response_limits = clamp_response_limits(payload.get("response_limits"))
         self.prompt_overrides = set_prompt_overrides(overrides)
         self._switch_count_language(previous_count_lang)
         self.model = str(payload.get("model", self.model) or "")
@@ -832,10 +873,21 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "dialog.memory_every",
             "dialog.memory_top_k",
             "dialog.image_style",
+            "dialog.image_look",
+            "dialog.response_limit",
             "image_style.sd",
             "image_style.midjourney",
             "image_style.flux",
             "image_style.generic",
+            "image_look.none",
+            "image_look.anime",
+            "image_look.realism",
+            "image_look.painting",
+            "image_look.cinematic",
+            "scene.format",
+            "scene.look",
+            "scene.prompt_label",
+            "scene.negative_label",
             "world_file.introduction.txt",
             "world_file.ai_instructions.txt",
             "world_file.plot_basics.txt",

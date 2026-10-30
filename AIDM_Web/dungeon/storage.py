@@ -7,11 +7,14 @@ from pathlib import Path
 from .config import (
     BASE_DIR,
     DEFAULT_API_URL,
+    DEFAULT_IMAGE_LOOK,
     DEFAULT_IMAGE_STYLE,
+    IMAGE_LOOKS,
     IMAGE_PROMPT_STYLES,
     INTRODUCTION_FILE,
     SETTINGS_FILE,
     WORLD_FILES,
+    clamp_response_limits,
 )
 from .i18n import INTRO_PREFIX, normalize_prompt_overrides
 
@@ -233,6 +236,8 @@ def load_global_settings():
         "summary_enabled": True,
         "memory_enabled": True,
         "image_prompt_style": DEFAULT_IMAGE_STYLE,
+        "image_look": DEFAULT_IMAGE_LOOK,
+        "response_limits": dict(clamp_response_limits(None)),
         "language": "ru",
         "prompt_overrides": {"ru": {}, "en": {}},
         "lan_access": True,
@@ -253,6 +258,9 @@ def load_global_settings():
         defaults["active_api_preset"] = ""
     if defaults.get("image_prompt_style") not in IMAGE_PROMPT_STYLES:
         defaults["image_prompt_style"] = DEFAULT_IMAGE_STYLE
+    if defaults.get("image_look") not in IMAGE_LOOKS:
+        defaults["image_look"] = DEFAULT_IMAGE_LOOK
+    defaults["response_limits"] = clamp_response_limits(defaults.get("response_limits"))
     defaults["summary_fill_percent"] = clamp_summary_fill_percent(defaults.get("summary_fill_percent", 80))
     defaults["prompt_overrides"] = normalize_prompt_overrides(defaults.get("prompt_overrides"))
     return defaults

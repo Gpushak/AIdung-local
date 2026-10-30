@@ -358,6 +358,8 @@ dialog textarea, dialog input[type="text"], dialog input[type="number"], dialog 
 dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 13px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.choice-row button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
 .tabs button[aria-pressed="true"], .file-buttons button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
 .file-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .section { margin: 16px 0 4px; color: var(--gold); font-size: 14px; }
