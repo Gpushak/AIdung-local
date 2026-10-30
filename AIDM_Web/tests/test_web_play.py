@@ -203,6 +203,7 @@ def test_memory_summary_scene_and_card_description():
         assert "Страж кивает" in _history_text(state)
         bank = client.get("/api/memory").json()
         assert bank["entries"]
+        assert bank["last_indexed_turn"] >= 1
         assert bank["entries"][-1]["summary"] == "нашли ключ"
         assert bank["entries"][-1]["keys"] == ["ключ"]
         stored = json.loads((tmp / "Camp" / "memory_bank.json").read_text(encoding="utf-8"))

@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=10" in page.text
+        assert "app.js?v=11" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -983,6 +983,102 @@ def test_prompt_limits_and_scene_look():
     print("OK  лимиты промптов меняются, стиль дописывается в промпт сцены")
 
 
+def test_world_guards_settings_and_startup():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        broken = tmp / "Broken"
+        broken.mkdir()
+        (broken / "history.json").write_text("{", encoding="utf-8")
+        client = TestClient(create_app())
+        state = client.get("/api/state").json()
+        assert state["world"] is None
+        assert state["notices"]
+        assert "Broken" in state["notices"][-1]
+        assert client.post("/api/worlds/open", json={"name": "Broken"}).status_code == 409
+        assert client.get("/api/state").json()["world"] is None
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        outside = Path(tempfile.mkdtemp())
+        (outside / "history.json").write_text("[]", encoding="utf-8")
+        link = tmp / "Linked"
+        link.symlink_to(outside, target_is_directory=True)
+        release = __import__("threading").Event()
+        try:
+            assert client.post("/api/worlds/open", json={"name": ".."}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": "../Camp"}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": str(outside)}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": "Linked"}).status_code == 400
+            assert client.get("/api/state").json()["world"] == "Camp"
+            assert client.delete("/api/worlds/%2e%2e").status_code == 400
+            assert (tmp / "Camp").is_dir()
+            assert client.delete("/api/worlds/Linked").status_code == 400
+            assert outside.is_dir()
+            assert (outside / "history.json").is_file()
+
+            kept = client.put("/api/settings", json={"temperature": "hot", "context_size": 0, "max_tokens": None})
+            assert kept.status_code == 200, kept.text
+            saved = kept.json()
+            assert saved["temperature"] == 0.7
+            assert saved["context_size"] == 1
+            assert saved["max_tokens"] == 300
+            tiny = client.put("/api/settings", json={"context_size": 200})
+            assert tiny.status_code == 200
+            assert tiny.json()["context_size"] == 200
+
+            empty = client.post("/api/scene")
+            assert empty.status_code == 200, empty.text
+            assert empty.json()["ok"] is False
+            assert empty.json()["notice"]
+
+            blank = client.put("/api/files/plot_basics.txt", json={"content": None})
+            assert blank.status_code == 200, blank.text
+            assert (tmp / "Camp" / "plot_basics.txt").read_text(encoding="utf-8") == ""
+
+            def blocking_read(_response, key, on_delta=None):
+                while not release.is_set() and not session.is_cancelled(key):
+                    time.sleep(0.02)
+                return "Готово", False
+
+            session._api_post = lambda payload, **kwargs: _Response()
+            session._read_response = blocking_read
+            assert client.post("/api/turn", json={"text": "ждать"}).status_code == 200
+            assert client.post("/api/summary").status_code == 409
+            assert client.post("/api/worlds", json={"name": "Other"}).status_code == 409
+            assert not (tmp / "Other").exists()
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 409
+            assert client.put("/api/files/plot_basics.txt", json={"content": "нельзя"}).status_code == 409
+            assert (tmp / "Camp" / "plot_basics.txt").read_text(encoding="utf-8") == ""
+            assert client.delete("/api/worlds/Camp").status_code == 409
+            assert (tmp / "Camp").is_dir()
+        finally:
+            release.set()
+            deadline = time.time() + 3
+            while time.time() < deadline and client.get("/api/state").json()["status"]["busy"]:
+                time.sleep(0.05)
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+
+        removed = client.delete("/api/worlds/Camp")
+        assert removed.status_code == 200, removed.text
+        state = removed.json()
+        assert state["world"] is None
+        assert state["history"] == []
+        assert state["fill"]["used"] == 0
+        assert state["fill"]["ratio"] == 0
+        assert state["memory"]["entries"] == []
+        assert client.post("/api/summary").status_code == 409
+    print("OK  чужие пути закрыты, битый мир не роняет сервер, ход блокирует правки")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -1003,4 +1099,5 @@ if __name__ == "__main__":
     test_finished_reply_is_settled_before_processing_ends()
     test_world_language_marks_and_english_token_scale()
     test_prompt_limits_and_scene_look()
+    test_world_guards_settings_and_startup()
     print("ALL WEB TESTS PASSED")

@@ -15,16 +15,23 @@ let drafting = false;
 let revision = 0;
 let settingsCache = null;
 let loadingOlder = false;
+let historyExpanded = false;
+let tailFrom = null;
 let pollTimer = 0;
 let pendingPlayer = "";
+let pendingIndex = null;
 let awaitingSettle = false;
 let settleOnce = false;
+let turnRev = null;
+let sendingTurn = false;
 let draftClosed = true;
 
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
-function t(key) {
-  return strings[key] || key;
+function t(key, vars) {
+  let text = strings[key] || key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (match, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match));
 }
 
 function plainText(value) {
@@ -54,6 +61,23 @@ function applyStrings() {
     if (node.id === "send" && node.classList.contains("stop")) return;
     node.textContent = t(node.dataset.i18n);
   });
+  actionEl.setAttribute("aria-label", t("btn.make_move"));
+  nextText.setAttribute("aria-label", t("dialog.next_title"));
+}
+
+function failNotice(error) {
+  const detail = error && error.body ? error.body.detail : "";
+  const code = typeof detail === "string" ? detail : "";
+  const known = ["busy", "exists", "missing", "bad name", "bad archive", "cannot undo", "cannot regenerate", "cannot summarize", "cannot edit", "busy or no world", "no world", "unknown file"];
+  if (code && !known.includes(code)) {
+    paintNotice(code);
+    return;
+  }
+  if (code === "busy" || code === "busy or no world" || document.body.classList.contains("busy")) {
+    paintNotice(state && state.world ? t("dialog.busy") : t("dialog.no_world"));
+    return;
+  }
+  if (code === "no world" || !(state && state.world)) paintNotice(t("dialog.no_world"));
 }
 
 async function api(path, options) {
@@ -106,7 +130,11 @@ function paintStatus(status) {
   if (stop) document.body.classList.remove("writing");
   sendEl.classList.toggle("stop", stop);
   sendEl.textContent = stop ? t("btn.stop") : t("btn.send");
-  actionEl.disabled = status.text === t("status.generating");
+  actionEl.disabled = stop;
+  for (const id of ["undo", "reroll", "edit", "summarize", "next"]) {
+    const node = document.getElementById(id);
+    if (node) node.disabled = stop;
+  }
   fitChrome();
   syncPolling();
 }
@@ -164,7 +192,7 @@ function renderLog(mode = "end", draftOverride) {
     const earlier = document.createElement("button");
     earlier.type = "button";
     earlier.className = "earlier";
-    earlier.textContent = state.language === "en" ? "Earlier" : "Раньше";
+    earlier.textContent = t("log.earlier");
     earlier.addEventListener("click", () => loadOlder());
     logEl.appendChild(earlier);
   }
@@ -178,8 +206,16 @@ function renderLog(mode = "end", draftOverride) {
     p.dataset.index = String(row.index);
     p.textContent = plainText(row.text);
     if (row.kind === "player" || row.kind === "dm") {
-      p.title = "edit";
-      p.addEventListener("dblclick", () => editRow(row));
+      p.tabIndex = 0;
+      p.setAttribute("role", "button");
+      p.title = row.kind === "dm" ? t("dialog.edit_dm") : t("dialog.edit_player");
+      const open = () => editRow(row);
+      p.addEventListener("dblclick", open);
+      p.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        open();
+      });
     }
     logEl.appendChild(p);
   }
@@ -226,6 +262,7 @@ async function loadOlder() {
     state.history = older.concat(state.history);
     state.history_from = page.history_from;
     state.history_total = page.history_total;
+    historyExpanded = true;
     renderLog("keep");
   } finally {
     loadingOlder = false;
@@ -362,11 +399,15 @@ function paintWorlds() {
 async function openWorld(name) {
   setWorldsOpen(false);
   if (state && state.world === name) return;
-  applySnapshot(await api("/api/worlds/open", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  }), "end");
+  try {
+    adoptSnapshot(await api("/api/worlds/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }), "end");
+  } catch (error) {
+    failNotice(error);
+  }
 }
 
 function setWorldsOpen(open) {
@@ -387,6 +428,10 @@ function applySnapshot(snap, mode = "end") {
     if (awaitingSettle) scheduleSettle();
     return;
   }
+  if (awaitingSettle && turnRev != null && typeof snap.rev === "number" && snap.rev <= turnRev && !snap.streaming) {
+    scheduleSettle();
+    return;
+  }
   if (pendingPlayer && !snapshotHasPlayer(snap, pendingPlayer)) {
     if (awaitingSettle) scheduleSettle();
     return;
@@ -403,12 +448,15 @@ function applySnapshot(snap, mode = "end") {
     && snap.status?.text === state.status?.text
     && (snap.notices || []).at(-1) === (state.notices || []).at(-1);
   if (typeof snap.rev === "number") revision = snap.rev;
+  if (!historyExpanded && Number.isInteger(snap.history_from)) tailFrom = snap.history_from;
   state = snap;
   drafting = Boolean(snap.streaming);
   draftClosed = !snap.streaming;
   if (!snap.streaming) {
     awaitingSettle = false;
     pendingPlayer = "";
+    pendingIndex = null;
+    turnRev = null;
     settleOnce = false;
   }
   settleFresh(snap);
@@ -422,7 +470,16 @@ function applySnapshot(snap, mode = "end") {
 }
 
 function snapshotHasPlayer(snap, text) {
-  return (snap.history || []).some((row) => row.kind === "player" && row.text === text);
+  const rows = snap.history || [];
+  if (pendingIndex == null) {
+    const last = [...rows].reverse().find((row) => row.kind === "player");
+    return Boolean(last && last.text === text);
+  }
+  const exact = rows.find((row) => row.index === pendingIndex);
+  if (exact) return exact.kind === "player" && exact.text === text;
+  return (snap.history_total || 0) > pendingIndex && rows.some((row) => (
+    row.kind === "player" && row.index >= pendingIndex && row.text === text
+  ));
 }
 
 function scheduleSettle() {
@@ -436,11 +493,26 @@ function scheduleSettle() {
 function beginTurn() {
   awaitingSettle = true;
   settleOnce = false;
+  turnRev = revision;
   syncPolling();
 }
 
+function adoptSnapshot(snap, mode) {
+  historyExpanded = false;
+  pendingPlayer = "";
+  pendingIndex = null;
+  awaitingSettle = false;
+  turnRev = null;
+  settleOnce = false;
+  applySnapshot(snap, mode);
+}
+
 async function refresh(mode = "end") {
-  const start = mode === "keep" && state && Number.isInteger(state.history_from) ? `?start=${state.history_from}` : "";
+  const expanded = historyExpanded
+    && state
+    && Number.isInteger(state.history_from)
+    && state.history_from !== tailFrom;
+  const start = expanded ? `?start=${state.history_from}` : "";
   applySnapshot(await api(`/api/state${start}`), mode);
 }
 
@@ -589,9 +661,12 @@ function showPlayerLine(text) {
   beginTurn();
   pendingPlayer = text;
   const last = state.history.at(-1);
-  if (last && last.kind === "player" && last.text === text) return;
-  const index = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
-  state.history.push({ index, kind: "player", text });
+  if (last && last.kind === "player" && last.text === text) {
+    pendingIndex = last.index;
+    return;
+  }
+  pendingIndex = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
+  state.history.push({ index: pendingIndex, kind: "player", text });
   if (Number.isInteger(state.history_total)) state.history_total += 1;
   renderLog("end");
 }
@@ -613,7 +688,10 @@ function retractPlayerLine(text) {
 
 function releaseTurn() {
   pendingPlayer = "";
+  pendingIndex = null;
   awaitingSettle = false;
+  turnRev = null;
+  settleOnce = false;
   syncPolling();
 }
 
@@ -624,8 +702,13 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
     nextError.textContent = t("dialog.empty_next");
     return;
   }
+  if (sendingTurn || document.body.classList.contains("busy")) {
+    nextError.textContent = t("dialog.busy");
+    return;
+  }
   nextError.textContent = "";
   showPlayerLine(direction);
+  sendingTurn = true;
   try {
     await api("/api/turn", {
       method: "POST",
@@ -636,19 +719,28 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
   } catch (error) {
     retractPlayerLine(direction);
     nextText.value = direction;
+    nextError.textContent = t("dialog.busy");
+  } finally {
+    sendingTurn = false;
   }
 });
 
 document.querySelector("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (sendEl.classList.contains("stop")) {
-    await api("/api/stop", { method: "POST" });
+    try {
+      await api("/api/stop", { method: "POST" });
+    } catch (error) {
+      failNotice(error);
+    }
     return;
   }
+  if (sendingTurn) return;
   const text = actionEl.value.trim();
   actionEl.value = "";
   if (text) showPlayerLine(text);
   else beginTurn();
+  sendingTurn = true;
   try {
     await api("/api/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     document.body.classList.remove("writing");
@@ -656,6 +748,9 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
   } catch (error) {
     retractPlayerLine(text);
     actionEl.value = text;
+    failNotice(error);
+  } finally {
+    sendingTurn = false;
   }
 });
 
@@ -705,10 +800,11 @@ actionEl.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("#undo").addEventListener("click", async () => {
-  state = await api("/api/undo", { method: "POST" });
-  renderLog("end");
-  paintFill(state.fill);
-  paintStatus(state.status);
+  try {
+    adoptSnapshot(await api("/api/undo", { method: "POST" }), "end");
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
 document.querySelector("#toggle-summary").addEventListener("click", async () => {
@@ -718,26 +814,30 @@ document.querySelector("#toggle-memory").addEventListener("click", async () => {
   paintMeters(await api("/api/toggles/memory", { method: "POST" }));
 });
 
-document.querySelector("#reroll").addEventListener("click", () => api("/api/regenerate", { method: "POST" }));
+document.querySelector("#reroll").addEventListener("click", () => api("/api/regenerate", { method: "POST" }).catch(failNotice));
 document.querySelector("#edit").addEventListener("click", () => {
   const rows = editableRows();
   if (rows.length) openEditor(rows[rows.length - 1].index);
 });
-document.querySelector("#summarize").addEventListener("click", () => api("/api/summary", { method: "POST" }));
+document.querySelector("#summarize").addEventListener("click", () => api("/api/summary", { method: "POST" }).catch(failNotice));
 
 document.querySelector("#lang").addEventListener("click", async () => {
   const next = (state.language === "en") ? "ru" : "en";
-  const settings = await api("/api/settings");
-  settings.language = next;
-  await api("/api/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
-  strings = await api("/api/strings");
-  applyStrings();
-  await refresh("keep");
-  document.querySelector("#lang").textContent = next.toUpperCase();
+  try {
+    const settings = await api("/api/settings");
+    settings.language = next;
+    await api("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
+    strings = await api("/api/strings");
+    applyStrings();
+    await refresh("keep");
+    document.querySelector("#lang").textContent = next.toUpperCase();
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
 document.querySelector("#panel-close").addEventListener("click", () => panel.close());
@@ -777,7 +877,7 @@ function openEditor(index) {
     panelTitle.textContent = title;
     heading.textContent = `${title} (${pos + 1}/${rows.length})`;
     labelText.textContent = row.kind === "dm" ? t("dialog.edit_dm_label") : t("dialog.edit_player_label");
-    area.value = plainText(row.text);
+    area.value = row.text;
     prev.disabled = pos === 0;
     next.disabled = pos === rows.length - 1;
   }
@@ -788,19 +888,17 @@ function openEditor(index) {
     const text = area.value.trim();
     if (!text) return;
     const start = Math.min(state.history_from || 0, row.index);
-    await api(`/api/history/${row.index}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    state = await api(`/api/state?start=${start}`);
-    paintWorlds();
-    paintFill(state.fill);
-    paintStatus(state.status);
-    paintNotice((state.notices || []).at(-1) || "");
-    paintMeters(state.meters);
-    renderLog("keep");
-    panel.close();
+    try {
+      await api(`/api/history/${row.index}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      applySnapshot(await api(`/api/state?start=${start}`), "keep");
+      panel.close();
+    } catch (error) {
+      failNotice(error);
+    }
   });
   nav.append(prev, next, save);
   panelBody.append(heading, label, nav);
@@ -823,15 +921,6 @@ function openPanel(name, extra) {
 document.querySelectorAll("[data-panel]").forEach((button) => {
   button.addEventListener("click", () => openPanel(button.dataset.panel));
 });
-
-function applyOpenedWorld() {
-  paintWorlds();
-  paintFill(state.fill);
-  paintStatus(state.status);
-  paintNotice((state.notices || []).at(-1) || "");
-  paintMeters(state.meters);
-  renderLog("end");
-}
 
 function mountCardEditor(host, cardsData, options) {
   const saveEnabled = !options || options.save !== false;
@@ -887,9 +976,10 @@ function mountCardEditor(host, cardsData, options) {
 
   function read() {
     if (!cards[current]) return;
-    cards[current].title = title.value.trim() || t("cards.untitled");
-    cards[current].description = desc.value;
-    cards[current].triggers = triggers.value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+    const card = cards[current];
+    card.title = title.value.trim();
+    if (desc.value !== asText(card.description)) card.description = desc.value;
+    card.triggers = triggers.value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   }
 
   function write() {
@@ -967,7 +1057,10 @@ function mountCardEditor(host, cardsData, options) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title.value, description: desc.value }),
-    }).catch(() => {});
+    }).catch((error) => {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    });
   });
   const save = document.createElement("button");
   save.type = "button";
@@ -975,13 +1068,22 @@ function mountCardEditor(host, cardsData, options) {
   save.textContent = t("btn.save");
   save.addEventListener("click", async () => {
     read();
-    await api("/api/cards", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cards }),
-    });
-    await refresh("keep");
-    draw();
+    for (const card of cards) {
+      if (!String(card.title || "").trim()) card.title = t("cards.untitled");
+    }
+    try {
+      await api("/api/cards", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cards }),
+      });
+      await refresh("keep");
+      write();
+      draw();
+    } catch (error) {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    }
   });
   row.append(add, del, gen);
   if (saveEnabled) row.append(save);
@@ -1048,13 +1150,18 @@ async function renderWorlds() {
   load.textContent = t("btn.load");
   load.addEventListener("click", async () => {
     if (!selected) return;
-    state = await api("/api/worlds/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: selected }),
-    });
-    applyOpenedWorld();
-    panel.close();
+    note.textContent = "";
+    try {
+      adoptSnapshot(await api("/api/worlds/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: selected }),
+      }), "end");
+      panel.close();
+    } catch (error) {
+      const detail = error.body && error.body.detail;
+      note.textContent = error.status === 400 ? t("dialog.bad_name_msg") : (typeof detail === "string" && detail !== "busy" ? detail : t("dialog.busy"));
+    }
   });
   const del = document.createElement("button");
   del.type = "button";
@@ -1064,8 +1171,12 @@ async function renderWorlds() {
     if (!selected) return;
     const question = t("dialog.delete_world_q").replace("{name}", selected);
     if (!window.confirm(question)) return;
-    state = await api(`/api/worlds/${encodeURIComponent(selected)}`, { method: "DELETE" });
-    applyOpenedWorld();
+    try {
+      adoptSnapshot(await api(`/api/worlds/${encodeURIComponent(selected)}`, { method: "DELETE" }), "end");
+    } catch (error) {
+      note.textContent = t("dialog.busy");
+      return;
+    }
     renderWorlds();
   });
   const create = document.createElement("button");
@@ -1107,11 +1218,13 @@ async function renderWorlds() {
         headers: { "Content-Type": "application/zip" },
         body: chosen,
       });
-      state = imported.state;
-      applyOpenedWorld();
+      adoptSnapshot(imported.state, "end");
       panel.close();
     } catch (err) {
-      note.textContent = err.status === 409 ? t("dialog.bad_name_msg") : t("dialog.import_failed");
+      const detail = err.body && err.body.detail;
+      if (detail === "busy") note.textContent = t("dialog.busy");
+      else if (err.status === 409) note.textContent = t("dialog.bad_name_msg");
+      else note.textContent = t("dialog.import_failed");
     }
   });
   actions.append(load, exp, imp, create, del);
@@ -1119,9 +1232,15 @@ async function renderWorlds() {
 }
 
 async function renderCreateWorld() {
+  let draft;
+  try {
+    draft = await api("/api/worlds/template");
+  } catch (error) {
+    failNotice(error);
+    return;
+  }
   panelTitle.textContent = t("dialog.create_world");
   panelBody.innerHTML = "";
-  const draft = await api("/api/worlds/template");
   const error = document.createElement("p");
   error.className = "error";
   const nameLabel = document.createElement("label");
@@ -1138,6 +1257,7 @@ async function renderCreateWorld() {
   const area = document.createElement("textarea");
   area.rows = 12;
   function show(file) {
+    if (currentFile && currentFile !== file) files[currentFile] = area.value;
     currentFile = file;
     area.value = files[file] || "";
     buttons.querySelectorAll("button").forEach((button) => {
@@ -1175,11 +1295,11 @@ async function renderCreateWorld() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.value, files, cards: draft.cards }),
       });
-      state = created.state;
-      applyOpenedWorld();
+      adoptSnapshot(created.state, "end");
       panel.close();
     } catch (err) {
-      error.textContent = t("dialog.bad_name_msg");
+      const detail = err.body && err.body.detail;
+      error.textContent = detail === "busy" ? t("dialog.busy") : t("dialog.bad_name_msg");
     }
   });
   const cancel = document.createElement("button");
@@ -1191,7 +1311,17 @@ async function renderCreateWorld() {
 }
 
 async function renderFiles() {
-  const files = await api("/api/files");
+  let files;
+  try {
+    files = await api("/api/files");
+  } catch (error) {
+    const note = document.createElement("p");
+    note.className = "error";
+    note.textContent = t("dialog.no_world");
+    panelBody.append(note);
+    return;
+  }
+  const original = { ...files };
   const names = Object.keys(files);
   let current = names[0] || "";
   const buttons = document.createElement("div");
@@ -1199,6 +1329,7 @@ async function renderFiles() {
   const area = document.createElement("textarea");
   area.rows = 16;
   function show(name) {
+    if (current && current !== name) files[current] = area.value;
     current = name;
     area.value = files[name] || "";
     buttons.querySelectorAll("button").forEach((button) => {
@@ -1218,17 +1349,32 @@ async function renderFiles() {
   const save = document.createElement("button");
   save.type = "button";
   save.textContent = t("btn.save");
+  const note = document.createElement("p");
+  note.className = "error";
   save.addEventListener("click", async () => {
-    files[current] = area.value;
-    const result = await api(`/api/files/${encodeURIComponent(current)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: area.value }),
-    });
-    paintFill(result.fill);
-    await refresh("keep");
+    if (current) files[current] = area.value;
+    const dirty = names.filter((name) => files[name] !== original[name]);
+    if (!dirty.length) return;
+    note.textContent = "";
+    try {
+      let fill = null;
+      for (const name of dirty) {
+        const result = await api(`/api/files/${encodeURIComponent(name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: files[name] }),
+        });
+        fill = result.fill;
+        original[name] = files[name];
+      }
+      if (fill) paintFill(fill);
+      await refresh("keep");
+    } catch (error) {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    }
   });
-  panelBody.append(buttons, area, save);
+  panelBody.append(buttons, area, note, save);
 }
 
 async function renderCards() {
@@ -1239,17 +1385,65 @@ async function renderCards() {
 async function renderMemory() {
   const memory = await api("/api/memory");
   const box = document.createElement("div");
-  for (const entry of memory.entries || []) {
+  const entries = memory.entries || [];
+  if (!state || !state.world) {
     const p = document.createElement("p");
-    p.textContent = `${entry.id}: ${entry.summary || ""}`;
+    p.textContent = t("dialog.no_world");
     box.append(p);
+    panelBody.append(box);
+    return;
   }
-  if (!memory.entries || !memory.entries.length) {
+  const stats = document.createElement("p");
+  stats.className = "section";
+  stats.textContent = entries.length
+    ? t("dialog.memory_stats", { n: entries.length, turns: memory.last_indexed_turn || 0 })
+    : t("dialog.memory_empty");
+  box.append(stats);
+  for (const entry of entries) {
+    const keys = (entry.keys || []).map(asText).filter(Boolean).join(", ") || "—";
+    const npcs = (entry.npcs || []).map(asText).filter(Boolean).join(", ") || "—";
     const p = document.createElement("p");
-    p.textContent = "—";
+    p.className = "memory-entry";
+    p.textContent = t("dialog.memory_entry", {
+      id: entry.id || "",
+      start: entry.turn_start ?? "?",
+      end: entry.turn_end ?? "?",
+      keys,
+      npcs,
+      location: asText(entry.location) || "—",
+      summary: asText(entry.summary),
+    });
     box.append(p);
   }
   panelBody.append(box);
+}
+
+async function copyText(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (error) {
+    /* LAN pages are not a secure context; the fallback below still copies. */
+  }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.append(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    copied = false;
+  }
+  area.remove();
+  return copied;
 }
 
 async function renderPrompt() {
@@ -1258,8 +1452,19 @@ async function renderPrompt() {
   const area = document.createElement("textarea");
   area.rows = 18;
   area.readOnly = true;
-  area.value = prompt ? `${prompt.system || ""}\n\n---\n\n${prompt.user || ""}` : "—";
-  panelBody.append(area);
+  const full = prompt
+    ? t("dialog.prompt_time", { time: prompt.time || "", tokens: prompt.tokens ?? "" })
+      + t("dialog.prompt_body", { system: prompt.system || "", user: prompt.user || "" })
+    : t("dialog.no_prompt");
+  area.value = full;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = t("btn.copy");
+  copy.disabled = !prompt;
+  copy.addEventListener("click", async () => {
+    if (await copyText(full)) paintNotice(t("msg.prompt_copied"));
+  });
+  panelBody.append(area, copy);
 }
 
 async function renderScene(extra) {
@@ -1310,15 +1515,50 @@ async function renderScene(extra) {
     return label;
   }
 
+  const note = document.createElement("p");
+  note.className = "error";
   const button = document.createElement("button");
   button.type = "button";
   button.className = "primary";
   button.textContent = t("btn.scene_prompt");
-  button.addEventListener("click", () => api("/api/scene", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_prompt_style: style, image_look: look }),
-  }));
+  button.addEventListener("click", async () => {
+    note.textContent = "";
+    try {
+      const result = await api("/api/scene", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_prompt_style: style, image_look: look }),
+      });
+      if (result && result.ok === false) {
+        note.className = "error";
+        note.textContent = result.notice || t("scene.needs_history");
+      } else {
+        note.className = "hint";
+        note.textContent = t("status.scene_prompt");
+      }
+    } catch (error) {
+      note.textContent = state && state.world ? t("dialog.busy") : t("dialog.no_world");
+    }
+  });
+  const promptText = scene ? scene.prompt : "";
+  const negativeText = scene ? scene.negative : "";
+  const copies = document.createElement("div");
+  copies.className = "row";
+  const copyPrompt = document.createElement("button");
+  copyPrompt.type = "button";
+  copyPrompt.textContent = t("scene.copy_prompt");
+  copyPrompt.disabled = !promptText;
+  copyPrompt.addEventListener("click", async () => {
+    if (await copyText(promptText)) paintNotice(t("scene.copied_prompt"));
+  });
+  const copyNegative = document.createElement("button");
+  copyNegative.type = "button";
+  copyNegative.textContent = t("scene.copy_negative");
+  copyNegative.disabled = !negativeText;
+  copyNegative.addEventListener("click", async () => {
+    if (await copyText(negativeText)) paintNotice(t("scene.copied_negative"));
+  });
+  copies.append(copyPrompt, copyNegative);
   panelBody.append(
     ...choiceRow("scene.format", data.image_styles || [], style, "image_style", (value) => {
       style = value;
@@ -1328,9 +1568,11 @@ async function renderScene(extra) {
       look = value;
       saveSceneOptions();
     }),
-    labeledBox(t("scene.prompt_label"), 8, scene ? scene.prompt : ""),
-    labeledBox(t("scene.negative_label"), 4, scene ? scene.negative : ""),
+    labeledBox(t("scene.prompt_label"), 8, promptText),
+    labeledBox(t("scene.negative_label"), 4, negativeText),
+    note,
     button,
+    copies,
   );
 }
 
@@ -1374,7 +1616,8 @@ async function renderSettings() {
       });
       await refresh("keep");
     } catch (err) {
-      error.textContent = JSON.stringify(err.body || err.message);
+      const detail = err.body && err.body.detail;
+      error.textContent = detail === "busy" ? t("dialog.busy") : JSON.stringify(err.body || err.message);
     }
   });
   panelBody.append(lanBlock(), tabs, body, error, save);
@@ -1442,7 +1685,13 @@ async function renderSettings() {
     input.value = settingsCache[key] ?? "";
     input.dataset.setting = key;
     input.addEventListener("input", () => {
-      settingsCache[key] = spec.type === "number" ? Number(input.value) : input.value;
+      if (spec.type === "number") {
+        if (input.value.trim() === "") return;
+        const number = Number(input.value);
+        if (Number.isFinite(number)) settingsCache[key] = number;
+        return;
+      }
+      settingsCache[key] = input.value;
     });
     wrap.append(input);
     return wrap;
@@ -1556,10 +1805,9 @@ async function renderSettings() {
     });
     actions.append(saveAs, remove);
     const presetWrap = document.createElement("label");
-    presetWrap.append(preset);
+    presetWrap.append(document.createTextNode(t("dialog.preset_name")), preset);
     box.append(
       presetWrap,
-      preset,
       actions,
       url,
       key,
@@ -1635,6 +1883,9 @@ async function renderSettings() {
     function choose(prompt) {
       selected = prompt;
       area.value = prompt.text;
+      list.querySelectorAll("button").forEach((button) => {
+        button.setAttribute("aria-pressed", button === prompt.button ? "true" : "false");
+      });
       const hasLimit = Number.isFinite(prompt.limit);
       limitWrap.hidden = !hasLimit;
       limitWrap.style.display = hasLimit ? "block" : "none";
@@ -1655,10 +1906,13 @@ async function renderSettings() {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = prompt.name || prompt.key;
+        prompt.button = button;
         button.addEventListener("click", () => choose(prompt));
         list.append(button);
       }
     }
+    const first = (settingsCache.prompts || []).flatMap((group) => group.prompts || [])[0];
+    if (first) choose(first);
     area.addEventListener("input", () => {
       if (!selected) return;
       selected.text = area.value;

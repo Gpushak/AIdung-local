@@ -12,6 +12,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from dungeon.storage import CorruptedDataError
 from web.netbind import default_route_ipv4, network_addresses
 from web.session import GameSession
 
@@ -140,6 +141,8 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             raise HTTPException(400, "bad name")
         except FileExistsError:
             raise HTTPException(409, "exists")
+        except RuntimeError:
+            raise HTTPException(409, "busy")
         return {"name": name, "state": game().state_view()}
 
     @app.post("/api/worlds/open")
@@ -148,6 +151,13 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             game().load_world(payload.get("name", ""))
         except FileNotFoundError:
             raise HTTPException(404, "missing")
+        except ValueError:
+            raise HTTPException(400, "bad name")
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        except CorruptedDataError:
+            notice = game().notices[-1] if game().notices else "corrupt"
+            raise HTTPException(409, notice)
         except Exception as exc:
             raise HTTPException(409, str(exc))
         return game().state_view()
@@ -185,7 +195,13 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.delete("/api/worlds/{name}")
     def delete_world(name: str):
-        if not game().delete_world(name):
+        try:
+            removed = game().delete_world(name)
+        except ValueError:
+            raise HTTPException(400, "bad name")
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        if not removed:
             raise HTTPException(404, "missing")
         return game().state_view()
 
@@ -220,8 +236,10 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.post("/api/summary")
     def summary():
+        if not game().current_world_path:
+            raise HTTPException(409, "no world")
         if not game().summarize():
-            raise HTTPException(409, "cannot summarize")
+            raise HTTPException(409, "busy")
         return {"ok": True}
 
     @app.get("/api/files")
@@ -232,7 +250,11 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.put("/api/files/{name}")
     def save_file(name: str, payload: dict):
-        if not game().save_world_file(name, payload.get("content", "")):
+        try:
+            saved = game().save_world_file(name, payload.get("content", ""))
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        if not saved:
             raise HTTPException(404, "unknown file")
         return {"ok": True, "fill": game().fill_view()}
 
@@ -242,7 +264,11 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.put("/api/cards")
     def save_cards(payload: dict):
-        if not game().save_cards(payload):
+        try:
+            saved = game().save_cards(payload)
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+        if not saved:
             raise HTTPException(409, "no world")
         return game().story_cards
 
@@ -277,7 +303,10 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.put("/api/settings")
     def save_settings(payload: dict):
-        problems = game().apply_settings(payload)
+        try:
+            problems = game().apply_settings(payload)
+        except RuntimeError:
+            raise HTTPException(409, "busy")
         if problems:
             raise HTTPException(400, detail={"prompts": problems})
         return game().settings_view()
@@ -288,6 +317,8 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             return game().activate_preset(payload.get("name", ""))
         except KeyError:
             raise HTTPException(404, "missing")
+        except RuntimeError:
+            raise HTTPException(409, "busy")
 
     @app.get("/api/prompt")
     def last_prompt():
@@ -300,7 +331,11 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
         if isinstance(payload, dict):
             game().set_scene_options(payload.get("image_prompt_style"), payload.get("image_look"))
         game().start_scene_prompt()
-        return {"ok": True}
+        started = bool(game().scene_prompt_running)
+        notice = ""
+        if not started and game().notices:
+            notice = game().notices[-1]
+        return {"ok": started, "notice": notice}
 
     @app.get("/api/scene")
     def last_scene():

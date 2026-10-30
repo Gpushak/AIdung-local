@@ -175,6 +175,7 @@ h1 {
   font-weight: 600;
 }
 
+button:disabled { opacity: 0.45; cursor: default; }
 header button, nav button, #menu-toggle, #models-toggle, #world-toggle, .composer-actions button, dialog button, dialog input {
   background: transparent;
   color: var(--ink);
@@ -333,7 +334,17 @@ dialog {
 #next-hint { white-space: pre-line; font-size: 14px; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-#panel-body { max-height: 70vh; overflow: auto; }
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+dialog header { flex: 0 0 auto; }
+#panel-body, #next-form {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .cards-layout {
   display: grid;
   grid-template-columns: minmax(160px, 220px) 1fr;
@@ -364,6 +375,9 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
 .file-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .section { margin: 16px 0 4px; color: var(--gold); font-size: 14px; }
 .card-list, .world-list, .prompt-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.card-list button[aria-pressed="true"],
+.prompt-list button[aria-pressed="true"] { color: var(--gold); }
+.memory-entry { white-space: pre-wrap; }
 .card-list button, .prompt-list button {
   display: block;
   width: 100%;
@@ -453,7 +467,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     border-radius: 0;
   }
   #next-dialog { width: 100%; }
-  #panel-body { max-height: none; }
+  #panel-body, #next-form { max-height: none; }
   .cards-layout { grid-template-columns: 1fr; }
   .cards-layout .card-list, .card-list, .world-list, .prompt-list { max-height: 28dvh; }
   dialog textarea, dialog input[type="text"], dialog input[type="number"], dialog input[type="password"], dialog input[type="search"] {

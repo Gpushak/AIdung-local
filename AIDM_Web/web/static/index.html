@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>AIDM</title>
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="/static/style.css?v=8">
+  <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
   <div class="topbar">
     <div class="top-actions">
-      <button type="button" id="menu-toggle" aria-expanded="false" data-i18n="btn.menu">Меню</button>
+      <button type="button" id="menu-toggle" aria-expanded="false" aria-controls="topbar-body" data-i18n="btn.menu">Меню</button>
       <div class="models">
-        <button type="button" id="models-toggle" aria-haspopup="menu" aria-expanded="false">
+        <button type="button" id="models-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="models-menu">
           <span data-i18n="btn.models">Модели</span>
           <span id="models-current" hidden></span>
         </button>
@@ -23,7 +23,7 @@
     <header>
       <h1 data-i18n="app_title">AIDM</h1>
       <div class="worlds-picker">
-        <button type="button" id="world-toggle" aria-haspopup="menu" aria-expanded="false">
+        <button type="button" id="world-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="world-menu">
           <span id="world-current" data-i18n="no_worlds">Нет миров</span>
         </button>
         <div id="world-menu" class="pop" role="menu" hidden></div>
@@ -49,16 +49,16 @@
 
   <main>
     <article id="log"></article>
-    <p id="notice" class="system" hidden></p>
+    <p id="notice" class="system" role="status" aria-live="polite" hidden></p>
     <div id="bar-row">
       <div id="bar" class="ok"><span></span></div>
       <div id="bar-meta">
         <p id="bar-label"></p>
-        <span id="status"></span>
+        <span id="status" role="status" aria-live="polite"></span>
       </div>
     </div>
     <form id="composer">
-      <textarea id="action" rows="3"></textarea>
+      <textarea id="action" rows="3" aria-label="Сделать ход"></textarea>
       <div class="composer-actions">
         <button type="button" id="act" data-i18n="btn.make_move">Сделать ход</button>
         <button type="submit" id="send" data-i18n="btn.send">Отправить</button>
@@ -95,6 +95,6 @@
     <div id="panel-body"></div>
   </dialog>
 
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>
