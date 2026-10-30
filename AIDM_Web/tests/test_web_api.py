@@ -452,7 +452,7 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=11" in page.text
+        assert "app.js?v=12" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -980,6 +980,37 @@ def test_prompt_limits_and_scene_look():
         assert stored["image_look"] == "realism"
         assert stored["image_prompt_style"] == "midjourney"
         assert stored["response_limits"]["prompt.scene_image"] == 900
+
+        marker = "MARKER_EARLY_CARD"
+        session.history = [f"Игрок: {marker} {i}" for i in range(15)]
+        session.response_limits["prompt.card_desc_gen"] = 180
+        calls.clear()
+        idle_deadline = time.time() + 3
+        while time.time() < idle_deadline and client.get("/api/state").json()["status"]["busy"]:
+            time.sleep(0.05)
+        described = client.post("/api/cards/describe", json={"title": "Страж", "description": "у ворот"})
+        assert described.status_code == 200, described.text
+        deadline = time.time() + 3
+        while time.time() < deadline and not calls:
+            time.sleep(0.05)
+        assert calls, "описание карточки не ушло в модель"
+        assert calls[-1]["max_tokens"] == 180
+        card_prompt = calls[-1]["messages"][0]["content"]
+        assert f"{marker} 0" in card_prompt
+        assert f"{marker} 14" in card_prompt
+        idle_deadline = time.time() + 3
+        while time.time() < idle_deadline and client.get("/api/state").json()["status"]["busy"]:
+            time.sleep(0.05)
+
+        before = client.get("/api/settings").json()
+        switched = client.put("/api/settings", json={"language": "en"})
+        assert switched.status_code == 200, switched.text
+        body = switched.json()
+        assert body["language"] == "en"
+        assert body["temperature"] == before["temperature"]
+        assert body["max_tokens"] == before["max_tokens"]
+        assert body["api_url"] == before["api_url"]
+        assert body["response_limits"]["prompt.card_desc_gen"] == 180
     print("OK  лимиты промптов меняются, стиль дописывается в промпт сцены")
 
 

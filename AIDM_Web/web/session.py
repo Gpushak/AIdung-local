@@ -20,6 +20,7 @@ from dungeon.config import (
     INTRODUCTION_FILE,
     WORLD_FILES,
     clamp_response_limits,
+    response_token_limit,
 )
 from dungeon.i18n import (
     DM_PREFIX,
@@ -47,6 +48,7 @@ from dungeon.memory import (
 )
 from dungeon.story_cards import default_story_cards, load_story_cards, save_story_cards
 from dungeon.tokens import (
+    count_tokens,
     counter_kind,
     format_token_count,
     model_scale_observed,
@@ -1267,6 +1269,9 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.cards_running = True
         self._begin_operation(CARDS)
         self.refresh_busy_state()
+        history = list(self.history)
+        card_limit = response_token_limit(self.response_limits, "prompt.card_desc_gen")
+        history_budget = max(0, int(self.context_size or 0) - 1500)
 
         def run():
             try:
@@ -1285,7 +1290,15 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                     world_context += self.tr("prompt.summary_header", text=summary_content)
                 author_path = self.current_world_path / "author_notes.txt"
                 author_notes = author_path.read_text(encoding="utf-8").strip() if author_path.exists() else ""
-                history_fragment = "\n".join(self.history[-12:])
+                preview = []
+                preview_tokens = 0
+                for msg in reversed(history):
+                    msg_tokens = count_tokens(msg) + 1
+                    if preview_tokens + msg_tokens > history_budget:
+                        break
+                    preview.insert(0, msg)
+                    preview_tokens += msg_tokens
+                history_fragment = "\n".join(preview)
                 prompt = self.tr(
                     "prompt.card_desc_gen",
                     world_context=world_context or self.tr("prompt.none"),
@@ -1297,7 +1310,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                 payload = self._api_payload(
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.2,
-                    max_tokens=400,
+                    max_tokens=card_limit,
                     stream=True,
                 )
                 response = self._api_post(payload, stream=True, timeout=120)

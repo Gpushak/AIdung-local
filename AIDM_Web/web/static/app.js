@@ -13,6 +13,7 @@ let strings = {};
 let state = null;
 let drafting = false;
 let revision = 0;
+let eventRev = 0;
 let settingsCache = null;
 let loadingOlder = false;
 let historyExpanded = false;
@@ -25,6 +26,7 @@ let settleOnce = false;
 let turnRev = null;
 let sendingTurn = false;
 let draftClosed = true;
+let applyCardDescription = null;
 
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
@@ -40,6 +42,23 @@ function plainText(value) {
     .replace(/[\uFE0F\u200D\u2300-\u23FF\u25A0-\u25FF\u2600-\u27BF]/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/^ +/, "");
+}
+
+function unixText(value) {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function actionErrorText(error) {
+  const detail = error && error.body ? error.body.detail : "";
+  const code = typeof detail === "string" ? detail : "";
+  if (code === "exists" || code === "bad name") return t("dialog.bad_name_msg");
+  if (code === "bad archive") return t("dialog.import_failed");
+  if (code && !["busy", "busy or no world", "no world", "missing", "unknown file", "cannot undo", "cannot regenerate", "cannot edit", "cannot summarize"].includes(code)) {
+    return code;
+  }
+  if (!(state && state.world) || code === "no world") return t("dialog.no_world");
+  if (code === "busy" || code === "busy or no world" || document.body.classList.contains("busy")) return t("dialog.busy");
+  return "";
 }
 
 function asText(value) {
@@ -305,25 +324,29 @@ function paintModels() {
 async function selectPreset(name) {
   setModelsOpen(false);
   if (state && state.presets && state.presets.active === name) return;
-  const presets = await api("/api/presets/activate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (state) state.presets = presets;
-  paintModels();
-  if (!settingsCache) return;
-  const found = (settingsCache.api_presets || []).find((item) => item.name === presets.active);
-  if (!found) return;
-  settingsCache.active_api_preset = found.name;
-  settingsCache.api_url = found.api_url || "";
-  settingsCache.api_key = found.api_key || "";
-  settingsCache.model = found.model || "";
-  const preset = document.querySelector("#settings-preset");
-  if (preset) preset.value = found.name;
-  for (const key of ["api_url", "api_key", "model"]) {
-    const input = document.querySelector(`[data-setting="${key}"]`);
-    if (input) input.value = settingsCache[key];
+  try {
+    const presets = await api("/api/presets/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (state) state.presets = presets;
+    paintModels();
+    if (!settingsCache) return;
+    const found = (settingsCache.api_presets || []).find((item) => item.name === presets.active);
+    if (!found) return;
+    settingsCache.active_api_preset = found.name;
+    settingsCache.api_url = found.api_url || "";
+    settingsCache.api_key = found.api_key || "";
+    settingsCache.model = found.model || "";
+    const preset = document.querySelector("#settings-preset");
+    if (preset) preset.value = found.name;
+    for (const key of ["api_url", "api_key", "model"]) {
+      const input = document.querySelector(`[data-setting="${key}"]`);
+      if (input) input.value = settingsCache[key];
+    }
+  } catch (error) {
+    failNotice(error);
   }
 }
 
@@ -422,9 +445,18 @@ function setWorldsOpen(open) {
   if (checked) menu.scrollTop = Math.max(0, checked.offsetTop - 8);
 }
 
+function regresses(snap) {
+  if (!state || typeof snap.rev !== "number" || typeof state.rev !== "number") return false;
+  if (snap.rev !== state.rev) return snap.rev < state.rev;
+  if ((snap.history_total || 0) < (state.history_total || 0)) return true;
+  if (state.streaming && snap.streaming && (snap.draft || "").length < (state.draft || "").length) return true;
+  if (state.streaming && !snap.streaming && (state.draft || "") && (snap.history_total || 0) === (state.history_total || 0)) return true;
+  return false;
+}
+
 function applySnapshot(snap, mode = "end") {
   if (!snap) return;
-  if (typeof snap.rev === "number" && snap.rev < revision) {
+  if ((typeof snap.rev === "number" && snap.rev < revision) || regresses(snap)) {
     if (awaitingSettle) scheduleSettle();
     return;
   }
@@ -447,7 +479,10 @@ function applySnapshot(snap, mode = "end") {
     && snap.history_total === state.history_total
     && snap.status?.text === state.status?.text
     && (snap.notices || []).at(-1) === (state.notices || []).at(-1);
-  if (typeof snap.rev === "number") revision = snap.rev;
+  if (typeof snap.rev === "number") {
+    revision = snap.rev;
+    if (snap.rev > eventRev) eventRev = snap.rev;
+  }
   if (!historyExpanded && Number.isInteger(snap.history_from)) tailFrom = snap.history_from;
   state = snap;
   drafting = Boolean(snap.streaming);
@@ -486,7 +521,7 @@ function scheduleSettle() {
   if (settleOnce || !awaitingSettle) return;
   settleOnce = true;
   window.setTimeout(() => {
-    if (awaitingSettle) refresh("end");
+    if (awaitingSettle) refresh("end").catch(() => {});
   }, 50);
 }
 
@@ -519,7 +554,7 @@ async function refresh(mode = "end") {
 function syncPolling() {
   const keep = document.body.classList.contains("busy") || awaitingSettle;
   if (keep) {
-    if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow"), 2000);
+    if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow").catch(() => {}), 2000);
   } else if (pollTimer) {
     window.clearInterval(pollTimer);
     pollTimer = 0;
@@ -557,8 +592,8 @@ function connectEvents() {
     } catch (error) {
       return;
     }
-    if (typeof event.rev === "number" && event.rev < revision) return;
-    if (typeof event.rev === "number") revision = event.rev;
+    if (typeof event.rev === "number" && event.rev < eventRev) return;
+    if (typeof event.rev === "number") eventRev = event.rev;
     if (event.kind === "dm_start") {
       drafting = true;
       draftClosed = false;
@@ -595,10 +630,9 @@ function connectEvents() {
         state.status = { ...state.status, ...event };
       }
     } else if (event.kind === "scene") {
-      openPanel("scene", event);
+      if (!(panel.open && panel.dataset.panel && panel.dataset.panel !== "scene")) openPanel("scene", event);
     } else if (event.kind === "card_desc") {
-      const box = document.querySelector("#card-desc");
-      if (box) box.value = event.text;
+      if (applyCardDescription) applyCardDescription(event);
     } else if (event.kind === "dm_done" || event.kind === "dm_abort") {
       drafting = false;
       draftClosed = true;
@@ -606,9 +640,9 @@ function connectEvents() {
         state.streaming = false;
         state.draft = "";
       }
-      refresh("end");
+      refresh("end").catch(() => {});
     } else if (event.kind === "history") {
-      refresh("end");
+      refresh("end").catch(() => {});
     }
   };
 }
@@ -719,7 +753,7 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
   } catch (error) {
     retractPlayerLine(direction);
     nextText.value = direction;
-    nextError.textContent = t("dialog.busy");
+    nextError.textContent = actionErrorText(error) || t("dialog.busy");
   } finally {
     sendingTurn = false;
   }
@@ -782,7 +816,11 @@ document.addEventListener("keydown", (event) => {
 
 document.querySelector("#act").addEventListener("click", async () => {
   if (document.body.classList.contains("busy")) {
-    await api("/api/stop", { method: "POST" });
+    try {
+      await api("/api/stop", { method: "POST" });
+    } catch (error) {
+      failNotice(error);
+    }
     return;
   }
   const writing = document.body.classList.toggle("writing");
@@ -808,10 +846,18 @@ document.querySelector("#undo").addEventListener("click", async () => {
 });
 
 document.querySelector("#toggle-summary").addEventListener("click", async () => {
-  paintMeters(await api("/api/toggles/summary", { method: "POST" }));
+  try {
+    paintMeters(await api("/api/toggles/summary", { method: "POST" }));
+  } catch (error) {
+    failNotice(error);
+  }
 });
 document.querySelector("#toggle-memory").addEventListener("click", async () => {
-  paintMeters(await api("/api/toggles/memory", { method: "POST" }));
+  try {
+    paintMeters(await api("/api/toggles/memory", { method: "POST" }));
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
 document.querySelector("#reroll").addEventListener("click", () => api("/api/regenerate", { method: "POST" }).catch(failNotice));
@@ -823,18 +869,25 @@ document.querySelector("#summarize").addEventListener("click", () => api("/api/s
 
 document.querySelector("#lang").addEventListener("click", async () => {
   const next = (state.language === "en") ? "ru" : "en";
+  const openTab = panelBody.querySelector(".tabs button[aria-pressed='true']");
+  const preferred = openTab ? openTab.dataset.tab : "ai";
   try {
-    const settings = await api("/api/settings");
-    settings.language = next;
-    await api("/api/settings", {
+    const updated = await api("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ language: next }),
     });
+    if (settingsCache) {
+      settingsCache.language = updated.language;
+      settingsCache.prompts = updated.prompts;
+    }
     strings = await api("/api/strings");
     applyStrings();
     await refresh("keep");
     document.querySelector("#lang").textContent = next.toUpperCase();
+    if (settingsCache && panel.open && panel.dataset.panel === "settings" && paintSettingsForm) {
+      paintSettingsForm(preferred);
+    }
   } catch (error) {
     failNotice(error);
   }
@@ -847,7 +900,7 @@ function editableRows() {
 }
 
 function openEditor(index) {
-  const rows = editableRows();
+  const rows = editableRows().map((row) => ({ index: row.index, kind: row.kind, text: row.text, draft: row.text }));
   let pos = rows.findIndex((row) => row.index === index);
   if (pos < 0) pos = rows.length - 1;
   if (pos < 0) return;
@@ -871,31 +924,42 @@ function openEditor(index) {
   save.type = "button";
   save.className = "primary";
   save.textContent = t("btn.save_ok");
+  function stash() {
+    if (rows[pos]) rows[pos].draft = area.value;
+  }
   function show() {
     const row = rows[pos];
     const title = row.kind === "dm" ? t("dialog.edit_dm") : t("dialog.edit_player");
     panelTitle.textContent = title;
     heading.textContent = `${title} (${pos + 1}/${rows.length})`;
     labelText.textContent = row.kind === "dm" ? t("dialog.edit_dm_label") : t("dialog.edit_player_label");
-    area.value = row.text;
+    area.value = row.draft;
     prev.disabled = pos === 0;
     next.disabled = pos === rows.length - 1;
   }
-  prev.addEventListener("click", () => { if (pos > 0) { pos -= 1; show(); } });
-  next.addEventListener("click", () => { if (pos < rows.length - 1) { pos += 1; show(); } });
+  prev.addEventListener("click", () => { if (pos > 0) { stash(); pos -= 1; show(); } });
+  next.addEventListener("click", () => { if (pos < rows.length - 1) { stash(); pos += 1; show(); } });
   save.addEventListener("click", async () => {
-    const row = rows[pos];
-    const text = area.value.trim();
-    if (!text) return;
-    const start = Math.min(state.history_from || 0, row.index);
-    try {
-      await api(`/api/history/${row.index}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      applySnapshot(await api(`/api/state?start=${start}`), "keep");
+    stash();
+    const dirty = rows.filter((row) => row.draft.trim() && row.draft !== row.text);
+    if (!dirty.length) {
+      if (!rows[pos].draft.trim()) return;
       panel.close();
+      return;
+    }
+    const start = Math.min(state.history_from || 0, ...dirty.map((row) => row.index));
+    try {
+      for (const row of dirty) {
+        await api(`/api/history/${row.index}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: row.draft.trim() }),
+        });
+        row.text = row.draft.trim();
+      }
+      if (Number.isInteger(tailFrom) && start < tailFrom) historyExpanded = true;
+      applySnapshot(await api(`/api/state?start=${start}`), "keep");
+      if (rows[pos].draft.trim()) panel.close();
     } catch (error) {
       failNotice(error);
     }
@@ -911,6 +975,8 @@ async function editRow(row) {
 }
 
 function openPanel(name, extra) {
+  panel.dataset.panel = name;
+  applyCardDescription = null;
   panelTitle.textContent = t(`btn.${name === "settings" ? "ai_settings" : name === "files" ? "world_files" : name === "scene" ? "scene_prompt" : name}`);
   panelBody.innerHTML = "";
   const loaders = { worlds: renderWorlds, files: renderFiles, cards: renderCards, memory: renderMemory, settings: renderSettings, prompt: renderPrompt, scene: renderScene };
@@ -1044,6 +1110,8 @@ function mountCardEditor(host, cardsData, options) {
     write();
     draw();
   });
+  let pendingTitle = "";
+  let pendingIndex = -1;
   const gen = document.createElement("button");
   gen.type = "button";
   gen.textContent = t("cards.generate_desc");
@@ -1053,6 +1121,8 @@ function mountCardEditor(host, cardsData, options) {
       note.textContent = t("cards.enter_title_first");
       return;
     }
+    pendingTitle = title.value.trim();
+    pendingIndex = current;
     api("/api/cards/describe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1099,6 +1169,13 @@ function mountCardEditor(host, cardsData, options) {
   host.append(layout);
   write();
   draw();
+  applyCardDescription = (event) => {
+    if (String(event.title || "").trim() !== pendingTitle) return;
+    const card = cards[pendingIndex];
+    if (!card) return;
+    card.description = event.text || "";
+    if (pendingIndex === current) desc.value = card.description;
+  };
   return { read };
 }
 
@@ -1174,7 +1251,7 @@ async function renderWorlds() {
     try {
       adoptSnapshot(await api(`/api/worlds/${encodeURIComponent(selected)}`, { method: "DELETE" }), "end");
     } catch (error) {
-      note.textContent = t("dialog.busy");
+      note.textContent = actionErrorText(error) || t("dialog.busy");
       return;
     }
     renderWorlds();
@@ -1223,8 +1300,9 @@ async function renderWorlds() {
     } catch (err) {
       const detail = err.body && err.body.detail;
       if (detail === "busy") note.textContent = t("dialog.busy");
-      else if (err.status === 409) note.textContent = t("dialog.bad_name_msg");
-      else note.textContent = t("dialog.import_failed");
+      else if (detail === "exists" || detail === "bad name") note.textContent = t("dialog.bad_name_msg");
+      else if (detail === "bad archive" || err.status === 400) note.textContent = t("dialog.import_failed");
+      else note.textContent = actionErrorText(err) || t("dialog.import_failed");
     }
   });
   actions.append(load, exp, imp, create, del);
@@ -1250,6 +1328,7 @@ async function renderCreateWorld() {
   name.value = draft.name || "";
   nameLabel.append(name);
   const files = draft.files || {};
+  for (const name of Object.keys(files)) files[name] = unixText(files[name]);
   const names = Object.keys(files);
   let currentFile = names[0] || "";
   const buttons = document.createElement("div");
@@ -1321,6 +1400,7 @@ async function renderFiles() {
     panelBody.append(note);
     return;
   }
+  for (const name of Object.keys(files)) files[name] = unixText(files[name]);
   const original = { ...files };
   const names = Object.keys(files);
   let current = names[0] || "";
@@ -1577,7 +1657,23 @@ async function renderScene(extra) {
 }
 
 async function renderSettings() {
-  settingsCache = await api("/api/settings");
+  try {
+    settingsCache = await api("/api/settings");
+  } catch (error) {
+    failNotice(error);
+    const note = document.createElement("p");
+    note.className = "error";
+    note.textContent = actionErrorText(error) || t("dialog.busy");
+    panelBody.append(note);
+    return;
+  }
+  paintSettingsForm("ai");
+}
+
+function paintSettingsForm(preferredTab) {
+  if (!settingsCache) return;
+  panelBody.replaceChildren();
+  const initial = preferredTab || "ai";
   const tabs = document.createElement("div");
   tabs.className = "tabs";
   const body = document.createElement("div");
@@ -1621,7 +1717,7 @@ async function renderSettings() {
     }
   });
   panelBody.append(lanBlock(), tabs, body, error, save);
-  show("ai");
+  show(initial);
 
   function lanBlock() {
     const box = document.createElement("div");

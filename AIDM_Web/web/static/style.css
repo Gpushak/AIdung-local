@@ -306,9 +306,9 @@ main {
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
-  overflow-x: auto;
 }
 #send {
   background: var(--gold);
@@ -333,7 +333,18 @@ dialog {
 #next-dialog { width: min(520px, 92vw); }
 #next-hint { white-space: pre-line; font-size: 14px; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+dialog header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#panel-close, #next-close { flex: 0 0 auto; }
+dialog input[type="checkbox"] {
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 6px 0 0;
+  padding: 0;
+  border: 0;
+  vertical-align: -0.15em;
+  accent-color: var(--gold);
+}
 dialog[open] {
   display: flex;
   flex-direction: column;
@@ -415,7 +426,10 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   .worlds-picker { flex: 1 1 auto; max-width: none; }
   #world-toggle { min-height: 44px; font-size: 16px; }
   #lang { flex: 0 0 auto; }
-  .top-actions { padding: 8px 12px 0; }
+  .top-actions { padding: 8px 12px 0; min-width: 0; }
+  .models { flex: 1 1 auto; min-width: 0; }
+  #models-toggle { max-width: 100%; }
+  .models .pop, .worlds-picker .pop { left: auto; right: 0; }
   #menu-toggle {
     display: inline-flex;
     align-items: center;
@@ -451,8 +465,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   body.writing #action { display: block; margin-bottom: 8px; }
   .composer-actions {
     display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
     margin-top: 0;
     width: 100%;
   }
@@ -465,6 +478,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     max-height: 100dvh;
     margin: 0;
     border-radius: 0;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px));
   }
   #next-dialog { width: 100%; }
   #panel-body, #next-form { max-height: none; }
