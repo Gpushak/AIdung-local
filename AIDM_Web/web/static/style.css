@@ -446,19 +446,21 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   #topbar-body { display: none; }
   .topbar.open #topbar-body { display: block; }
   nav {
-    flex-wrap: wrap;
-    overflow: visible;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
     width: 100%;
     min-width: 0;
     padding: 0 12px 8px;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
   }
   nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #world-toggle { min-height: 44px; }
-  nav button {
+  nav button, #summary-count, #memory-count {
     flex: 0 0 auto;
-    max-width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    text-align: center;
+    scroll-snap-align: start;
+    white-space: nowrap;
   }
   main { width: calc(100% - 16px); }
   #log { padding: 16px 14px 8px; border-radius: 12px; min-height: 36dvh; }
