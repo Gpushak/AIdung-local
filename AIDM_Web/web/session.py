@@ -9,6 +9,7 @@ import threading
 import zipfile
 
 from dungeon.ai_engine import ACTION, CARDS, AIEngineMixin
+from dungeon.api_stream import MEMORY, SCENE, SCENE_TURNS, SUMMARY
 from dungeon.session import SharedTurnMixin
 from dungeon.config import (
     BASE_DIR,
@@ -42,6 +43,7 @@ from dungeon.i18n import (
 )
 from dungeon.memory import (
     count_completed_turns,
+    get_recent_turn_messages,
     load_memory_bank,
     save_memory_bank,
     sync_memory_bank_after_undo,
@@ -239,6 +241,9 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
     def __init__(self):
         self._subscribers = []
         self._sub_lock = threading.Lock()
+        # Один замок на проверку «уже занято» и подъём флага. Иначе два запроса
+        # успевают оба увидеть простой и запустить две генерации.
+        self._job_lock = threading.RLock()
         self.root = _UiBridge(self.emit)
         self.notices = []
         self.cards_running = False
@@ -373,7 +378,69 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
 
     def _finish_player_turn(self):
         self._dm_streaming = False
-        super()._finish_player_turn()
+        with self._job_lock:
+            self.processing = False
+            self._end_operation(ACTION)
+            start_summary = bool(self._schedule_summary_after_turn) and not self.summary_indexing
+            start_memory = (
+                bool(self._schedule_memory_after_turn)
+                and not self.memory_indexing
+                and bool(self.memory_enabled)
+            )
+            self._schedule_summary_after_turn = False
+            self._schedule_memory_after_turn = False
+            if start_summary:
+                self.summary_indexing = True
+            if start_memory:
+                self.memory_indexing = True
+        self.update_context_indicator()
+        if start_summary:
+            self._begin_operation(SUMMARY)
+        if start_memory:
+            self._begin_operation(MEMORY)
+        self.refresh_busy_state()
+        if start_summary:
+            threading.Thread(target=self._generate_global_summary_impl, daemon=True).start()
+        if start_memory:
+            threading.Thread(target=self._run_memory_indexing_impl, args=(False,), daemon=True).start()
+
+    def start_global_summary(self):
+        with self._job_lock:
+            if self.summary_indexing or not self.current_world_path:
+                return
+            if self.processing or self.scene_prompt_running or self.cards_running:
+                return
+            self.summary_indexing = True
+        self._begin_operation(SUMMARY)
+        self.refresh_busy_state()
+        threading.Thread(target=self._generate_global_summary_impl, daemon=True).start()
+
+    def start_memory_indexing(self, force=False):
+        with self._job_lock:
+            if self.memory_indexing:
+                return
+            if not self.memory_enabled and not force:
+                return
+            if self.processing or self.scene_prompt_running or self.cards_running:
+                return
+            self.memory_indexing = True
+        self._begin_operation(MEMORY)
+        self.refresh_busy_state()
+        threading.Thread(target=self._run_memory_indexing_impl, args=(force,), daemon=True).start()
+
+    def start_scene_prompt(self):
+        with self._job_lock:
+            if self.is_busy() or not self.current_world_path:
+                return False
+            recent = get_recent_turn_messages(self.history, SCENE_TURNS)
+            if not any(str(msg).startswith(DM_PREFIX) for msg in recent):
+                self.add_system_message(self.tr("scene.needs_history"))
+                return False
+            self.scene_prompt_running = True
+        self._begin_operation(SCENE)
+        self.refresh_busy_state()
+        threading.Thread(target=self._run_scene_prompt, daemon=True).start()
+        return True
 
     def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd", look="none"):
         self.last_scene = {
@@ -383,6 +450,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "look": look,
         }
         self.emit("scene", **self.last_scene)
+        self.add_system_message(self.tr("msg.scene_prompt_done"))
 
     def scene_view(self):
         return {
@@ -596,6 +664,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         }
 
     def load_world(self, world_name):
+        with self._job_lock:
+            return self._load_world(world_name)
+
+    def _load_world(self, world_name):
         if self.is_busy():
             raise RuntimeError("busy")
         cleaned, world_path = world_directory(world_name)
@@ -763,6 +835,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         }
 
     def apply_settings(self, payload):
+        with self._job_lock:
+            return self._apply_settings(payload)
+
+    def _apply_settings(self, payload):
         if self.is_busy():
             raise RuntimeError("busy")
         overrides = payload.get("prompt_overrides", self.prompt_overrides)
@@ -827,6 +903,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
 
     def activate_preset(self, name):
         """Подставляет сохранённые адрес, ключ и модель и сразу записывает настройки."""
+        with self._job_lock:
+            return self._activate_preset(name)
+
+    def _activate_preset(self, name):
         if self.is_busy():
             raise RuntimeError("busy")
         wanted = str(name or "").strip()
@@ -1013,16 +1093,19 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.emit("history")
 
     def submit_turn(self, text="", direction=""):
-        if self.is_busy() or not self.current_world_path:
-            return False
-        if direction:
-            direction = direction.strip()
-            self._stage_player_line(direction)
-            self._dispatch_turn(self.process_action, ("",), {"direction_hint": direction})
-        else:
-            text = (text or "").strip()
-            self._stage_player_line(text)
-            self._dispatch_turn(self.process_action, (text,))
+        with self._job_lock:
+            if self.is_busy() or not self.current_world_path:
+                return False
+            self.processing = True
+            if direction:
+                direction = direction.strip()
+                self._stage_player_line(direction)
+                args, kwargs = ("",), {"direction_hint": direction}
+            else:
+                text = (text or "").strip()
+                self._stage_player_line(text)
+                args, kwargs = (text,), None
+        self._dispatch_turn(self.process_action, args, kwargs)
         return True
 
     def stop(self):
@@ -1033,6 +1116,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return stopped
 
     def undo(self):
+        with self._job_lock:
+            return self._undo()
+
+    def _undo(self):
         if self.is_busy() or not self.history or not self.current_world_path:
             return False
         self.history.pop()
@@ -1058,16 +1145,22 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return ""
 
     def regenerate(self):
-        if self.is_busy() or not self.history or not self.current_world_path:
-            return False
-        last_player_input = self.rewind_last_reply()
-        save_history(self.current_world_path, self.history)
+        with self._job_lock:
+            if self.is_busy() or not self.history or not self.current_world_path:
+                return False
+            self.processing = True
+            last_player_input = self.rewind_last_reply()
+            save_history(self.current_world_path, self.history)
         self.update_context_indicator()
         self.emit("history")
         self._dispatch_turn(self.process_action, (last_player_input,))
         return True
 
     def edit_message(self, index, text):
+        with self._job_lock:
+            return self._edit_message(index, text)
+
+    def _edit_message(self, index, text):
         if self.is_busy() or not self.current_world_path:
             return False
         if index < 0 or index >= len(self.history):
@@ -1122,6 +1215,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return files
 
     def save_world_file(self, name, content):
+        with self._job_lock:
+            return self._save_world_file(name, content)
+
+    def _save_world_file(self, name, content):
         if not self.current_world_path or name not in WORLD_FILES:
             return False
         if self.is_busy():
@@ -1137,6 +1234,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return True
 
     def save_cards(self, cards):
+        with self._job_lock:
+            return self._save_cards(cards)
+
+    def _save_cards(self, cards):
         if not self.current_world_path or not isinstance(cards, dict):
             return False
         if self.is_busy():
@@ -1156,6 +1257,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         save_memory_bank(self.current_world_path, self.memory_bank)
 
     def export_world_bytes(self, name):
+        with self._job_lock:
+            return self._export_world_bytes(name)
+
+    def _export_world_bytes(self, name):
         cleaned, world_path = world_directory(name)
         if not world_path.is_dir():
             raise FileNotFoundError(cleaned)
@@ -1178,6 +1283,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return buffer.getvalue(), cleaned
 
     def import_world_bytes(self, name, payload):
+        with self._job_lock:
+            return self._import_world_bytes(name, payload)
+
+    def _import_world_bytes(self, name, payload):
         if self.is_busy():
             raise RuntimeError("busy")
         cleaned = clean_world_name(name)
@@ -1197,6 +1306,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return cleaned
 
     def create_world(self, name, files=None, cards=None):
+        with self._job_lock:
+            return self._create_world(name, files, cards)
+
+    def _create_world(self, name, files=None, cards=None):
         if self.is_busy():
             raise RuntimeError("busy")
         cleaned = clean_world_name(name)
@@ -1219,6 +1332,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return cleaned
 
     def delete_world(self, name):
+        with self._job_lock:
+            return self._delete_world(name)
+
+    def _delete_world(self, name):
         cleaned, world_path = world_directory(name)
         if not world_path.is_dir():
             return False
@@ -1258,15 +1375,20 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return True
 
     def summarize(self):
-        if not self.current_world_path or self.is_busy():
-            return False
-        self.start_global_summary()
+        with self._job_lock:
+            if not self.current_world_path or self.is_busy():
+                return False
+            self.summary_indexing = True
+        self._begin_operation(SUMMARY)
+        self.refresh_busy_state()
+        threading.Thread(target=self._generate_global_summary_impl, daemon=True).start()
         return True
 
     def describe_card(self, title, description=""):
-        if not self.current_world_path or self.is_busy():
-            return False
-        self.cards_running = True
+        with self._job_lock:
+            if not self.current_world_path or self.is_busy():
+                return False
+            self.cards_running = True
         self._begin_operation(CARDS)
         self.refresh_busy_state()
         history = list(self.history)
@@ -1321,7 +1443,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             except Exception as exc:
                 self.add_system_message(self.tr("msg.error", msg=str(exc)))
             finally:
-                self.cards_running = False
+                with self._job_lock:
+                    self.cards_running = False
                 self._end_operation(CARDS)
                 self.refresh_busy_state()
 

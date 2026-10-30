@@ -330,12 +330,13 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             raise HTTPException(409, "busy or no world")
         if isinstance(payload, dict):
             game().set_scene_options(payload.get("image_prompt_style"), payload.get("image_look"))
-        game().start_scene_prompt()
-        started = bool(game().scene_prompt_running)
-        notice = ""
-        if not started and game().notices:
-            notice = game().notices[-1]
-        return {"ok": started, "notice": notice}
+        started = game().start_scene_prompt()
+        if started:
+            return {"ok": True, "notice": ""}
+        if game().is_busy():
+            raise HTTPException(409, "busy or no world")
+        notice = game().notices[-1] if game().notices else ""
+        return {"ok": False, "notice": notice}
 
     @app.get("/api/scene")
     def last_scene():

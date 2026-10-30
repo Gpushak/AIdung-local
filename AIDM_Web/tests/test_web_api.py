@@ -452,7 +452,8 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=12" in page.text
+        assert "app.js?v=14" in page.text
+        assert "style.css?v=11" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -1110,6 +1111,106 @@ def test_world_guards_settings_and_startup():
     print("OK  чужие пути закрыты, битый мир не роняет сервер, ход блокирует правки")
 
 
+def test_overlapping_jobs_start_once():
+    import tempfile
+    import threading
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        client.put("/api/settings", json={"summary_enabled": False, "memory_enabled": False})
+        hold = threading.Event()
+        posts = []
+        kinds = []
+
+        def post(payload, **_kwargs):
+            posts.append(payload)
+            hold.wait(3)
+            return _Response()
+
+        def read(_response, key, on_delta=None):
+            kinds.append(key)
+            return '{"summary":"заметка","keys":["ключ"],"location":"зал","npcs":["страж"],"prompt":"hall","negative_prompt":"blur"}', False
+
+        session._api_post = post
+        session._read_response = read
+
+        def race(calls):
+            barrier = threading.Barrier(len(calls))
+            results = []
+
+            def run(fn):
+                barrier.wait()
+                results.append(bool(fn()))
+
+            threads = [threading.Thread(target=run, args=(fn,)) for fn in calls]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results
+
+        def release():
+            hold.set()
+            deadline = time.time() + 3
+            while time.time() < deadline and session.is_busy():
+                time.sleep(0.02)
+            assert not session.is_busy(), session.status_view()
+            hold.clear()
+
+        def claim_once(calls):
+            before = len(posts)
+            results = race(calls)
+            deadline = time.time() + 3
+            while time.time() < deadline and len(posts) < before + 1:
+                time.sleep(0.01)
+            assert sorted(results) == [False, True], results
+            assert len(posts) == before + 1, posts[before:]
+            release()
+
+        claim_once([
+            lambda: session.describe_card("Страж", "у ворот"),
+            lambda: session.describe_card("Страж", "у ворот"),
+        ])
+        claim_once([
+            lambda: session.describe_card("Страж", "у ворот"),
+            lambda: session.submit_turn("осмотреться"),
+        ])
+        assert sum(1 for line in session.history if line == "Игрок: осмотреться") == 1
+        claim_once([
+            lambda: session.submit_turn("шагнуть"),
+            lambda: session.submit_turn("шагнуть"),
+        ])
+        assert sum(1 for line in session.history if line == "Игрок: шагнуть") == 1
+        claim_once([lambda: session.summarize(), lambda: session.summarize()])
+        session.history = ["Игрок: осмотреться", "Мастер: В зале темно."]
+        claim_once([lambda: session.start_scene_prompt(), lambda: session.start_scene_prompt()])
+
+        session.memory_bank = {"last_indexed_turn": 0, "entries": []}
+        session.memory_enabled = True
+        session.memory_interval = 1
+        session.processing = True
+        session._schedule_summary_after_turn = True
+        session._schedule_memory_after_turn = True
+        kinds.clear()
+        hold.set()
+        session._finish_player_turn()
+        deadline = time.time() + 3
+        while time.time() < deadline and not {"summary", "memory"} <= set(kinds):
+            time.sleep(0.02)
+        from dungeon.api_stream import MEMORY, SUMMARY
+        assert SUMMARY in kinds and MEMORY in kinds, kinds
+        deadline = time.time() + 3
+        while time.time() < deadline and session.is_busy():
+            time.sleep(0.02)
+        assert not session.is_busy()
+    print("OK  два одновременных запуска не открывают вторую работу")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -1131,4 +1232,5 @@ if __name__ == "__main__":
     test_world_language_marks_and_english_token_scale()
     test_prompt_limits_and_scene_look()
     test_world_guards_settings_and_startup()
+    test_overlapping_jobs_start_once()
     print("ALL WEB TESTS PASSED")

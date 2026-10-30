@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; }
 
+html {
+  scroll-padding-top: calc(var(--topbar-height, 160px) + 12px);
+  scroll-padding-bottom: calc(var(--composer-height, 180px) + 12px);
+}
+
 body {
   margin: 0;
   min-height: 100dvh;
@@ -250,7 +255,6 @@ main {
   width: 100%;
   margin: 0 0 1.15em;
   padding: 8px;
-  scroll-margin-top: 108px;
   background: transparent;
   color: var(--muted);
   border: 1px dashed var(--line);
@@ -450,8 +454,6 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   nav button { flex: 0 0 auto; }
   main { width: calc(100% - 16px); }
   #log { padding: 16px 14px 8px; border-radius: 12px; min-height: 36dvh; }
-  #log .earlier { scroll-margin-top: 64px; }
-  .topbar.open ~ main #log .earlier { scroll-margin-top: 220px; }
   #bar-row { flex-wrap: wrap; gap: 6px; }
   #bar { flex: 1 1 100%; }
   #bar-meta { flex: 1 1 100%; justify-content: space-between; margin-left: 0; min-width: 0; }

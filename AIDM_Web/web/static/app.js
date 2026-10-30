@@ -82,6 +82,7 @@ function applyStrings() {
   });
   actionEl.setAttribute("aria-label", t("btn.make_move"));
   nextText.setAttribute("aria-label", t("dialog.next_title"));
+  fitChrome();
 }
 
 function failNotice(error) {
@@ -276,6 +277,7 @@ async function loadOlder() {
     const older = page.history.filter((row) => !seen.has(row.index));
     if (!older.length) {
       state.history_from = page.history_from;
+      renderLog("keep");
       return;
     }
     state.history = older.concat(state.history);
@@ -792,6 +794,7 @@ document.querySelector("#menu-toggle").addEventListener("click", () => {
   const bar = document.querySelector(".topbar");
   const open = bar.classList.toggle("open");
   document.querySelector("#menu-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+  fitChrome();
 });
 
 document.querySelector("#models-toggle").addEventListener("click", (event) => {
@@ -2042,6 +2045,8 @@ function fitChrome() {
     ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
     : 0;
   document.documentElement.style.setProperty("--keyboard", `${Math.round(keyboard)}px`);
+  const topbar = document.querySelector(".topbar");
+  if (topbar) document.documentElement.style.setProperty("--topbar-height", `${topbar.offsetHeight}px`);
   const composer = document.querySelector("#composer");
   if (composer) {
     document.documentElement.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
