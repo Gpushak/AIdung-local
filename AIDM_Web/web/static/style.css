@@ -446,12 +446,20 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   #topbar-body { display: none; }
   .topbar.open #topbar-body { display: block; }
   nav {
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    overflow: visible;
+    width: 100%;
+    min-width: 0;
     padding: 0 12px 8px;
   }
   nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #world-toggle { min-height: 44px; }
-  nav button { flex: 0 0 auto; }
+  nav button {
+    flex: 0 0 auto;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
   main { width: calc(100% - 16px); }
   #log { padding: 16px 14px 8px; border-radius: 12px; min-height: 36dvh; }
   #bar-row { flex-wrap: wrap; gap: 6px; }
