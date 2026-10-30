@@ -13,18 +13,27 @@ let strings = {};
 let state = null;
 let drafting = false;
 let revision = 0;
+let eventRev = 0;
 let settingsCache = null;
 let loadingOlder = false;
+let historyExpanded = false;
+let tailFrom = null;
 let pollTimer = 0;
 let pendingPlayer = "";
+let pendingIndex = null;
 let awaitingSettle = false;
 let settleOnce = false;
+let turnRev = null;
+let sendingTurn = false;
 let draftClosed = true;
+let applyCardDescription = null;
 
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 
-function t(key) {
-  return strings[key] || key;
+function t(key, vars) {
+  let text = strings[key] || key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (match, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : match));
 }
 
 function plainText(value) {
@@ -33,6 +42,23 @@ function plainText(value) {
     .replace(/[\uFE0F\u200D\u2300-\u23FF\u25A0-\u25FF\u2600-\u27BF]/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/^ +/, "");
+}
+
+function unixText(value) {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function actionErrorText(error) {
+  const detail = error && error.body ? error.body.detail : "";
+  const code = typeof detail === "string" ? detail : "";
+  if (code === "exists" || code === "bad name") return t("dialog.bad_name_msg");
+  if (code === "bad archive") return t("dialog.import_failed");
+  if (code && !["busy", "busy or no world", "no world", "missing", "unknown file", "cannot undo", "cannot regenerate", "cannot edit", "cannot summarize"].includes(code)) {
+    return code;
+  }
+  if (!(state && state.world) || code === "no world") return t("dialog.no_world");
+  if (code === "busy" || code === "busy or no world" || document.body.classList.contains("busy")) return t("dialog.busy");
+  return "";
 }
 
 function asText(value) {
@@ -54,6 +80,24 @@ function applyStrings() {
     if (node.id === "send" && node.classList.contains("stop")) return;
     node.textContent = t(node.dataset.i18n);
   });
+  actionEl.setAttribute("aria-label", t("btn.make_move"));
+  nextText.setAttribute("aria-label", t("dialog.next_title"));
+  fitChrome();
+}
+
+function failNotice(error) {
+  const detail = error && error.body ? error.body.detail : "";
+  const code = typeof detail === "string" ? detail : "";
+  const known = ["busy", "exists", "missing", "bad name", "bad archive", "cannot undo", "cannot regenerate", "cannot summarize", "cannot edit", "busy or no world", "no world", "unknown file"];
+  if (code && !known.includes(code)) {
+    paintNotice(code);
+    return;
+  }
+  if (code === "busy" || code === "busy or no world" || document.body.classList.contains("busy")) {
+    paintNotice(state && state.world ? t("dialog.busy") : t("dialog.no_world"));
+    return;
+  }
+  if (code === "no world" || !(state && state.world)) paintNotice(t("dialog.no_world"));
 }
 
 async function api(path, options) {
@@ -106,7 +150,11 @@ function paintStatus(status) {
   if (stop) document.body.classList.remove("writing");
   sendEl.classList.toggle("stop", stop);
   sendEl.textContent = stop ? t("btn.stop") : t("btn.send");
-  actionEl.disabled = status.text === t("status.generating");
+  actionEl.disabled = stop;
+  for (const id of ["undo", "reroll", "edit", "summarize", "next"]) {
+    const node = document.getElementById(id);
+    if (node) node.disabled = stop;
+  }
   fitChrome();
   syncPolling();
 }
@@ -164,7 +212,7 @@ function renderLog(mode = "end", draftOverride) {
     const earlier = document.createElement("button");
     earlier.type = "button";
     earlier.className = "earlier";
-    earlier.textContent = state.language === "en" ? "Earlier" : "Раньше";
+    earlier.textContent = t("log.earlier");
     earlier.addEventListener("click", () => loadOlder());
     logEl.appendChild(earlier);
   }
@@ -178,8 +226,16 @@ function renderLog(mode = "end", draftOverride) {
     p.dataset.index = String(row.index);
     p.textContent = plainText(row.text);
     if (row.kind === "player" || row.kind === "dm") {
-      p.title = "edit";
-      p.addEventListener("dblclick", () => editRow(row));
+      p.tabIndex = 0;
+      p.setAttribute("role", "button");
+      p.title = row.kind === "dm" ? t("dialog.edit_dm") : t("dialog.edit_player");
+      const open = () => editRow(row);
+      p.addEventListener("dblclick", open);
+      p.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        open();
+      });
     }
     logEl.appendChild(p);
   }
@@ -221,11 +277,13 @@ async function loadOlder() {
     const older = page.history.filter((row) => !seen.has(row.index));
     if (!older.length) {
       state.history_from = page.history_from;
+      renderLog("keep");
       return;
     }
     state.history = older.concat(state.history);
     state.history_from = page.history_from;
     state.history_total = page.history_total;
+    historyExpanded = true;
     renderLog("keep");
   } finally {
     loadingOlder = false;
@@ -268,25 +326,29 @@ function paintModels() {
 async function selectPreset(name) {
   setModelsOpen(false);
   if (state && state.presets && state.presets.active === name) return;
-  const presets = await api("/api/presets/activate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (state) state.presets = presets;
-  paintModels();
-  if (!settingsCache) return;
-  const found = (settingsCache.api_presets || []).find((item) => item.name === presets.active);
-  if (!found) return;
-  settingsCache.active_api_preset = found.name;
-  settingsCache.api_url = found.api_url || "";
-  settingsCache.api_key = found.api_key || "";
-  settingsCache.model = found.model || "";
-  const preset = document.querySelector("#settings-preset");
-  if (preset) preset.value = found.name;
-  for (const key of ["api_url", "api_key", "model"]) {
-    const input = document.querySelector(`[data-setting="${key}"]`);
-    if (input) input.value = settingsCache[key];
+  try {
+    const presets = await api("/api/presets/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (state) state.presets = presets;
+    paintModels();
+    if (!settingsCache) return;
+    const found = (settingsCache.api_presets || []).find((item) => item.name === presets.active);
+    if (!found) return;
+    settingsCache.active_api_preset = found.name;
+    settingsCache.api_url = found.api_url || "";
+    settingsCache.api_key = found.api_key || "";
+    settingsCache.model = found.model || "";
+    const preset = document.querySelector("#settings-preset");
+    if (preset) preset.value = found.name;
+    for (const key of ["api_url", "api_key", "model"]) {
+      const input = document.querySelector(`[data-setting="${key}"]`);
+      if (input) input.value = settingsCache[key];
+    }
+  } catch (error) {
+    failNotice(error);
   }
 }
 
@@ -362,11 +424,15 @@ function paintWorlds() {
 async function openWorld(name) {
   setWorldsOpen(false);
   if (state && state.world === name) return;
-  applySnapshot(await api("/api/worlds/open", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  }), "end");
+  try {
+    adoptSnapshot(await api("/api/worlds/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }), "end");
+  } catch (error) {
+    failNotice(error);
+  }
 }
 
 function setWorldsOpen(open) {
@@ -381,10 +447,23 @@ function setWorldsOpen(open) {
   if (checked) menu.scrollTop = Math.max(0, checked.offsetTop - 8);
 }
 
+function regresses(snap) {
+  if (!state || typeof snap.rev !== "number" || typeof state.rev !== "number") return false;
+  if (snap.rev !== state.rev) return snap.rev < state.rev;
+  if ((snap.history_total || 0) < (state.history_total || 0)) return true;
+  if (state.streaming && snap.streaming && (snap.draft || "").length < (state.draft || "").length) return true;
+  if (state.streaming && !snap.streaming && (state.draft || "") && (snap.history_total || 0) === (state.history_total || 0)) return true;
+  return false;
+}
+
 function applySnapshot(snap, mode = "end") {
   if (!snap) return;
-  if (typeof snap.rev === "number" && snap.rev < revision) {
+  if ((typeof snap.rev === "number" && snap.rev < revision) || regresses(snap)) {
     if (awaitingSettle) scheduleSettle();
+    return;
+  }
+  if (awaitingSettle && turnRev != null && typeof snap.rev === "number" && snap.rev <= turnRev && !snap.streaming) {
+    scheduleSettle();
     return;
   }
   if (pendingPlayer && !snapshotHasPlayer(snap, pendingPlayer)) {
@@ -402,13 +481,19 @@ function applySnapshot(snap, mode = "end") {
     && snap.history_total === state.history_total
     && snap.status?.text === state.status?.text
     && (snap.notices || []).at(-1) === (state.notices || []).at(-1);
-  if (typeof snap.rev === "number") revision = snap.rev;
+  if (typeof snap.rev === "number") {
+    revision = snap.rev;
+    if (snap.rev > eventRev) eventRev = snap.rev;
+  }
+  if (!historyExpanded && Number.isInteger(snap.history_from)) tailFrom = snap.history_from;
   state = snap;
   drafting = Boolean(snap.streaming);
   draftClosed = !snap.streaming;
   if (!snap.streaming) {
     awaitingSettle = false;
     pendingPlayer = "";
+    pendingIndex = null;
+    turnRev = null;
     settleOnce = false;
   }
   settleFresh(snap);
@@ -422,32 +507,56 @@ function applySnapshot(snap, mode = "end") {
 }
 
 function snapshotHasPlayer(snap, text) {
-  return (snap.history || []).some((row) => row.kind === "player" && row.text === text);
+  const rows = snap.history || [];
+  if (pendingIndex == null) {
+    const last = [...rows].reverse().find((row) => row.kind === "player");
+    return Boolean(last && last.text === text);
+  }
+  const exact = rows.find((row) => row.index === pendingIndex);
+  if (exact) return exact.kind === "player" && exact.text === text;
+  return (snap.history_total || 0) > pendingIndex && rows.some((row) => (
+    row.kind === "player" && row.index >= pendingIndex && row.text === text
+  ));
 }
 
 function scheduleSettle() {
   if (settleOnce || !awaitingSettle) return;
   settleOnce = true;
   window.setTimeout(() => {
-    if (awaitingSettle) refresh("end");
+    if (awaitingSettle) refresh("end").catch(() => {});
   }, 50);
 }
 
 function beginTurn() {
   awaitingSettle = true;
   settleOnce = false;
+  turnRev = revision;
   syncPolling();
 }
 
+function adoptSnapshot(snap, mode) {
+  historyExpanded = false;
+  pendingPlayer = "";
+  pendingIndex = null;
+  awaitingSettle = false;
+  turnRev = null;
+  settleOnce = false;
+  applySnapshot(snap, mode);
+}
+
 async function refresh(mode = "end") {
-  const start = mode === "keep" && state && Number.isInteger(state.history_from) ? `?start=${state.history_from}` : "";
+  const expanded = historyExpanded
+    && state
+    && Number.isInteger(state.history_from)
+    && state.history_from !== tailFrom;
+  const start = expanded ? `?start=${state.history_from}` : "";
   applySnapshot(await api(`/api/state${start}`), mode);
 }
 
 function syncPolling() {
   const keep = document.body.classList.contains("busy") || awaitingSettle;
   if (keep) {
-    if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow"), 2000);
+    if (!pollTimer) pollTimer = window.setInterval(() => refresh("follow").catch(() => {}), 2000);
   } else if (pollTimer) {
     window.clearInterval(pollTimer);
     pollTimer = 0;
@@ -485,8 +594,8 @@ function connectEvents() {
     } catch (error) {
       return;
     }
-    if (typeof event.rev === "number" && event.rev < revision) return;
-    if (typeof event.rev === "number") revision = event.rev;
+    if (typeof event.rev === "number" && event.rev < eventRev) return;
+    if (typeof event.rev === "number") eventRev = event.rev;
     if (event.kind === "dm_start") {
       drafting = true;
       draftClosed = false;
@@ -523,10 +632,9 @@ function connectEvents() {
         state.status = { ...state.status, ...event };
       }
     } else if (event.kind === "scene") {
-      openPanel("scene", event);
+      if (!(panel.open && panel.dataset.panel && panel.dataset.panel !== "scene")) openPanel("scene", event);
     } else if (event.kind === "card_desc") {
-      const box = document.querySelector("#card-desc");
-      if (box) box.value = event.text;
+      if (applyCardDescription) applyCardDescription(event);
     } else if (event.kind === "dm_done" || event.kind === "dm_abort") {
       drafting = false;
       draftClosed = true;
@@ -534,9 +642,9 @@ function connectEvents() {
         state.streaming = false;
         state.draft = "";
       }
-      refresh("end");
+      refresh("end").catch(() => {});
     } else if (event.kind === "history") {
-      refresh("end");
+      refresh("end").catch(() => {});
     }
   };
 }
@@ -589,9 +697,12 @@ function showPlayerLine(text) {
   beginTurn();
   pendingPlayer = text;
   const last = state.history.at(-1);
-  if (last && last.kind === "player" && last.text === text) return;
-  const index = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
-  state.history.push({ index, kind: "player", text });
+  if (last && last.kind === "player" && last.text === text) {
+    pendingIndex = last.index;
+    return;
+  }
+  pendingIndex = Number.isInteger(state.history_total) ? state.history_total : state.history.length;
+  state.history.push({ index: pendingIndex, kind: "player", text });
   if (Number.isInteger(state.history_total)) state.history_total += 1;
   renderLog("end");
 }
@@ -613,7 +724,10 @@ function retractPlayerLine(text) {
 
 function releaseTurn() {
   pendingPlayer = "";
+  pendingIndex = null;
   awaitingSettle = false;
+  turnRev = null;
+  settleOnce = false;
   syncPolling();
 }
 
@@ -624,8 +738,13 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
     nextError.textContent = t("dialog.empty_next");
     return;
   }
+  if (sendingTurn || document.body.classList.contains("busy")) {
+    nextError.textContent = t("dialog.busy");
+    return;
+  }
   nextError.textContent = "";
   showPlayerLine(direction);
+  sendingTurn = true;
   try {
     await api("/api/turn", {
       method: "POST",
@@ -636,19 +755,28 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
   } catch (error) {
     retractPlayerLine(direction);
     nextText.value = direction;
+    nextError.textContent = actionErrorText(error) || t("dialog.busy");
+  } finally {
+    sendingTurn = false;
   }
 });
 
 document.querySelector("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (sendEl.classList.contains("stop")) {
-    await api("/api/stop", { method: "POST" });
+    try {
+      await api("/api/stop", { method: "POST" });
+    } catch (error) {
+      failNotice(error);
+    }
     return;
   }
+  if (sendingTurn) return;
   const text = actionEl.value.trim();
   actionEl.value = "";
   if (text) showPlayerLine(text);
   else beginTurn();
+  sendingTurn = true;
   try {
     await api("/api/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
     document.body.classList.remove("writing");
@@ -656,6 +784,9 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
   } catch (error) {
     retractPlayerLine(text);
     actionEl.value = text;
+    failNotice(error);
+  } finally {
+    sendingTurn = false;
   }
 });
 
@@ -663,6 +794,7 @@ document.querySelector("#menu-toggle").addEventListener("click", () => {
   const bar = document.querySelector(".topbar");
   const open = bar.classList.toggle("open");
   document.querySelector("#menu-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+  fitChrome();
 });
 
 document.querySelector("#models-toggle").addEventListener("click", (event) => {
@@ -687,7 +819,11 @@ document.addEventListener("keydown", (event) => {
 
 document.querySelector("#act").addEventListener("click", async () => {
   if (document.body.classList.contains("busy")) {
-    await api("/api/stop", { method: "POST" });
+    try {
+      await api("/api/stop", { method: "POST" });
+    } catch (error) {
+      failNotice(error);
+    }
     return;
   }
   const writing = document.body.classList.toggle("writing");
@@ -705,39 +841,59 @@ actionEl.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("#undo").addEventListener("click", async () => {
-  state = await api("/api/undo", { method: "POST" });
-  renderLog("end");
-  paintFill(state.fill);
-  paintStatus(state.status);
+  try {
+    adoptSnapshot(await api("/api/undo", { method: "POST" }), "end");
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
 document.querySelector("#toggle-summary").addEventListener("click", async () => {
-  paintMeters(await api("/api/toggles/summary", { method: "POST" }));
+  try {
+    paintMeters(await api("/api/toggles/summary", { method: "POST" }));
+  } catch (error) {
+    failNotice(error);
+  }
 });
 document.querySelector("#toggle-memory").addEventListener("click", async () => {
-  paintMeters(await api("/api/toggles/memory", { method: "POST" }));
+  try {
+    paintMeters(await api("/api/toggles/memory", { method: "POST" }));
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
-document.querySelector("#reroll").addEventListener("click", () => api("/api/regenerate", { method: "POST" }));
+document.querySelector("#reroll").addEventListener("click", () => api("/api/regenerate", { method: "POST" }).catch(failNotice));
 document.querySelector("#edit").addEventListener("click", () => {
   const rows = editableRows();
   if (rows.length) openEditor(rows[rows.length - 1].index);
 });
-document.querySelector("#summarize").addEventListener("click", () => api("/api/summary", { method: "POST" }));
+document.querySelector("#summarize").addEventListener("click", () => api("/api/summary", { method: "POST" }).catch(failNotice));
 
 document.querySelector("#lang").addEventListener("click", async () => {
   const next = (state.language === "en") ? "ru" : "en";
-  const settings = await api("/api/settings");
-  settings.language = next;
-  await api("/api/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(settings),
-  });
-  strings = await api("/api/strings");
-  applyStrings();
-  await refresh("keep");
-  document.querySelector("#lang").textContent = next.toUpperCase();
+  const openTab = panelBody.querySelector(".tabs button[aria-pressed='true']");
+  const preferred = openTab ? openTab.dataset.tab : "ai";
+  try {
+    const updated = await api("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: next }),
+    });
+    if (settingsCache) {
+      settingsCache.language = updated.language;
+      settingsCache.prompts = updated.prompts;
+    }
+    strings = await api("/api/strings");
+    applyStrings();
+    await refresh("keep");
+    document.querySelector("#lang").textContent = next.toUpperCase();
+    if (settingsCache && panel.open && panel.dataset.panel === "settings" && paintSettingsForm) {
+      paintSettingsForm(preferred);
+    }
+  } catch (error) {
+    failNotice(error);
+  }
 });
 
 document.querySelector("#panel-close").addEventListener("click", () => panel.close());
@@ -747,7 +903,7 @@ function editableRows() {
 }
 
 function openEditor(index) {
-  const rows = editableRows();
+  const rows = editableRows().map((row) => ({ index: row.index, kind: row.kind, text: row.text, draft: row.text }));
   let pos = rows.findIndex((row) => row.index === index);
   if (pos < 0) pos = rows.length - 1;
   if (pos < 0) return;
@@ -771,36 +927,45 @@ function openEditor(index) {
   save.type = "button";
   save.className = "primary";
   save.textContent = t("btn.save_ok");
+  function stash() {
+    if (rows[pos]) rows[pos].draft = area.value;
+  }
   function show() {
     const row = rows[pos];
     const title = row.kind === "dm" ? t("dialog.edit_dm") : t("dialog.edit_player");
     panelTitle.textContent = title;
     heading.textContent = `${title} (${pos + 1}/${rows.length})`;
     labelText.textContent = row.kind === "dm" ? t("dialog.edit_dm_label") : t("dialog.edit_player_label");
-    area.value = plainText(row.text);
+    area.value = row.draft;
     prev.disabled = pos === 0;
     next.disabled = pos === rows.length - 1;
   }
-  prev.addEventListener("click", () => { if (pos > 0) { pos -= 1; show(); } });
-  next.addEventListener("click", () => { if (pos < rows.length - 1) { pos += 1; show(); } });
+  prev.addEventListener("click", () => { if (pos > 0) { stash(); pos -= 1; show(); } });
+  next.addEventListener("click", () => { if (pos < rows.length - 1) { stash(); pos += 1; show(); } });
   save.addEventListener("click", async () => {
-    const row = rows[pos];
-    const text = area.value.trim();
-    if (!text) return;
-    const start = Math.min(state.history_from || 0, row.index);
-    await api(`/api/history/${row.index}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    state = await api(`/api/state?start=${start}`);
-    paintWorlds();
-    paintFill(state.fill);
-    paintStatus(state.status);
-    paintNotice((state.notices || []).at(-1) || "");
-    paintMeters(state.meters);
-    renderLog("keep");
-    panel.close();
+    stash();
+    const dirty = rows.filter((row) => row.draft.trim() && row.draft !== row.text);
+    if (!dirty.length) {
+      if (!rows[pos].draft.trim()) return;
+      panel.close();
+      return;
+    }
+    const start = Math.min(state.history_from || 0, ...dirty.map((row) => row.index));
+    try {
+      for (const row of dirty) {
+        await api(`/api/history/${row.index}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: row.draft.trim() }),
+        });
+        row.text = row.draft.trim();
+      }
+      if (Number.isInteger(tailFrom) && start < tailFrom) historyExpanded = true;
+      applySnapshot(await api(`/api/state?start=${start}`), "keep");
+      if (rows[pos].draft.trim()) panel.close();
+    } catch (error) {
+      failNotice(error);
+    }
   });
   nav.append(prev, next, save);
   panelBody.append(heading, label, nav);
@@ -813,6 +978,8 @@ async function editRow(row) {
 }
 
 function openPanel(name, extra) {
+  panel.dataset.panel = name;
+  applyCardDescription = null;
   panelTitle.textContent = t(`btn.${name === "settings" ? "ai_settings" : name === "files" ? "world_files" : name === "scene" ? "scene_prompt" : name}`);
   panelBody.innerHTML = "";
   const loaders = { worlds: renderWorlds, files: renderFiles, cards: renderCards, memory: renderMemory, settings: renderSettings, prompt: renderPrompt, scene: renderScene };
@@ -823,15 +990,6 @@ function openPanel(name, extra) {
 document.querySelectorAll("[data-panel]").forEach((button) => {
   button.addEventListener("click", () => openPanel(button.dataset.panel));
 });
-
-function applyOpenedWorld() {
-  paintWorlds();
-  paintFill(state.fill);
-  paintStatus(state.status);
-  paintNotice((state.notices || []).at(-1) || "");
-  paintMeters(state.meters);
-  renderLog("end");
-}
 
 function mountCardEditor(host, cardsData, options) {
   const saveEnabled = !options || options.save !== false;
@@ -887,9 +1045,10 @@ function mountCardEditor(host, cardsData, options) {
 
   function read() {
     if (!cards[current]) return;
-    cards[current].title = title.value.trim() || t("cards.untitled");
-    cards[current].description = desc.value;
-    cards[current].triggers = triggers.value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+    const card = cards[current];
+    card.title = title.value.trim();
+    if (desc.value !== asText(card.description)) card.description = desc.value;
+    card.triggers = triggers.value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   }
 
   function write() {
@@ -954,6 +1113,8 @@ function mountCardEditor(host, cardsData, options) {
     write();
     draw();
   });
+  let pendingTitle = "";
+  let pendingIndex = -1;
   const gen = document.createElement("button");
   gen.type = "button";
   gen.textContent = t("cards.generate_desc");
@@ -963,11 +1124,16 @@ function mountCardEditor(host, cardsData, options) {
       note.textContent = t("cards.enter_title_first");
       return;
     }
+    pendingTitle = title.value.trim();
+    pendingIndex = current;
     api("/api/cards/describe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title.value, description: desc.value }),
-    }).catch(() => {});
+    }).catch((error) => {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    });
   });
   const save = document.createElement("button");
   save.type = "button";
@@ -975,13 +1141,22 @@ function mountCardEditor(host, cardsData, options) {
   save.textContent = t("btn.save");
   save.addEventListener("click", async () => {
     read();
-    await api("/api/cards", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cards }),
-    });
-    await refresh("keep");
-    draw();
+    for (const card of cards) {
+      if (!String(card.title || "").trim()) card.title = t("cards.untitled");
+    }
+    try {
+      await api("/api/cards", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cards }),
+      });
+      await refresh("keep");
+      write();
+      draw();
+    } catch (error) {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    }
   });
   row.append(add, del, gen);
   if (saveEnabled) row.append(save);
@@ -997,6 +1172,13 @@ function mountCardEditor(host, cardsData, options) {
   host.append(layout);
   write();
   draw();
+  applyCardDescription = (event) => {
+    if (String(event.title || "").trim() !== pendingTitle) return;
+    const card = cards[pendingIndex];
+    if (!card) return;
+    card.description = event.text || "";
+    if (pendingIndex === current) desc.value = card.description;
+  };
   return { read };
 }
 
@@ -1048,13 +1230,18 @@ async function renderWorlds() {
   load.textContent = t("btn.load");
   load.addEventListener("click", async () => {
     if (!selected) return;
-    state = await api("/api/worlds/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: selected }),
-    });
-    applyOpenedWorld();
-    panel.close();
+    note.textContent = "";
+    try {
+      adoptSnapshot(await api("/api/worlds/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: selected }),
+      }), "end");
+      panel.close();
+    } catch (error) {
+      const detail = error.body && error.body.detail;
+      note.textContent = error.status === 400 ? t("dialog.bad_name_msg") : (typeof detail === "string" && detail !== "busy" ? detail : t("dialog.busy"));
+    }
   });
   const del = document.createElement("button");
   del.type = "button";
@@ -1064,8 +1251,12 @@ async function renderWorlds() {
     if (!selected) return;
     const question = t("dialog.delete_world_q").replace("{name}", selected);
     if (!window.confirm(question)) return;
-    state = await api(`/api/worlds/${encodeURIComponent(selected)}`, { method: "DELETE" });
-    applyOpenedWorld();
+    try {
+      adoptSnapshot(await api(`/api/worlds/${encodeURIComponent(selected)}`, { method: "DELETE" }), "end");
+    } catch (error) {
+      note.textContent = actionErrorText(error) || t("dialog.busy");
+      return;
+    }
     renderWorlds();
   });
   const create = document.createElement("button");
@@ -1107,11 +1298,14 @@ async function renderWorlds() {
         headers: { "Content-Type": "application/zip" },
         body: chosen,
       });
-      state = imported.state;
-      applyOpenedWorld();
+      adoptSnapshot(imported.state, "end");
       panel.close();
     } catch (err) {
-      note.textContent = err.status === 409 ? t("dialog.bad_name_msg") : t("dialog.import_failed");
+      const detail = err.body && err.body.detail;
+      if (detail === "busy") note.textContent = t("dialog.busy");
+      else if (detail === "exists" || detail === "bad name") note.textContent = t("dialog.bad_name_msg");
+      else if (detail === "bad archive" || err.status === 400) note.textContent = t("dialog.import_failed");
+      else note.textContent = actionErrorText(err) || t("dialog.import_failed");
     }
   });
   actions.append(load, exp, imp, create, del);
@@ -1119,9 +1313,15 @@ async function renderWorlds() {
 }
 
 async function renderCreateWorld() {
+  let draft;
+  try {
+    draft = await api("/api/worlds/template");
+  } catch (error) {
+    failNotice(error);
+    return;
+  }
   panelTitle.textContent = t("dialog.create_world");
   panelBody.innerHTML = "";
-  const draft = await api("/api/worlds/template");
   const error = document.createElement("p");
   error.className = "error";
   const nameLabel = document.createElement("label");
@@ -1131,6 +1331,7 @@ async function renderCreateWorld() {
   name.value = draft.name || "";
   nameLabel.append(name);
   const files = draft.files || {};
+  for (const name of Object.keys(files)) files[name] = unixText(files[name]);
   const names = Object.keys(files);
   let currentFile = names[0] || "";
   const buttons = document.createElement("div");
@@ -1138,6 +1339,7 @@ async function renderCreateWorld() {
   const area = document.createElement("textarea");
   area.rows = 12;
   function show(file) {
+    if (currentFile && currentFile !== file) files[currentFile] = area.value;
     currentFile = file;
     area.value = files[file] || "";
     buttons.querySelectorAll("button").forEach((button) => {
@@ -1175,11 +1377,11 @@ async function renderCreateWorld() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.value, files, cards: draft.cards }),
       });
-      state = created.state;
-      applyOpenedWorld();
+      adoptSnapshot(created.state, "end");
       panel.close();
     } catch (err) {
-      error.textContent = t("dialog.bad_name_msg");
+      const detail = err.body && err.body.detail;
+      error.textContent = detail === "busy" ? t("dialog.busy") : t("dialog.bad_name_msg");
     }
   });
   const cancel = document.createElement("button");
@@ -1191,7 +1393,18 @@ async function renderCreateWorld() {
 }
 
 async function renderFiles() {
-  const files = await api("/api/files");
+  let files;
+  try {
+    files = await api("/api/files");
+  } catch (error) {
+    const note = document.createElement("p");
+    note.className = "error";
+    note.textContent = t("dialog.no_world");
+    panelBody.append(note);
+    return;
+  }
+  for (const name of Object.keys(files)) files[name] = unixText(files[name]);
+  const original = { ...files };
   const names = Object.keys(files);
   let current = names[0] || "";
   const buttons = document.createElement("div");
@@ -1199,6 +1412,7 @@ async function renderFiles() {
   const area = document.createElement("textarea");
   area.rows = 16;
   function show(name) {
+    if (current && current !== name) files[current] = area.value;
     current = name;
     area.value = files[name] || "";
     buttons.querySelectorAll("button").forEach((button) => {
@@ -1218,17 +1432,32 @@ async function renderFiles() {
   const save = document.createElement("button");
   save.type = "button";
   save.textContent = t("btn.save");
+  const note = document.createElement("p");
+  note.className = "error";
   save.addEventListener("click", async () => {
-    files[current] = area.value;
-    const result = await api(`/api/files/${encodeURIComponent(current)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: area.value }),
-    });
-    paintFill(result.fill);
-    await refresh("keep");
+    if (current) files[current] = area.value;
+    const dirty = names.filter((name) => files[name] !== original[name]);
+    if (!dirty.length) return;
+    note.textContent = "";
+    try {
+      let fill = null;
+      for (const name of dirty) {
+        const result = await api(`/api/files/${encodeURIComponent(name)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: files[name] }),
+        });
+        fill = result.fill;
+        original[name] = files[name];
+      }
+      if (fill) paintFill(fill);
+      await refresh("keep");
+    } catch (error) {
+      const detail = error && error.body && error.body.detail;
+      note.textContent = detail === "no world" || !(state && state.world) ? t("dialog.no_world") : t("dialog.busy");
+    }
   });
-  panelBody.append(buttons, area, save);
+  panelBody.append(buttons, area, note, save);
 }
 
 async function renderCards() {
@@ -1239,17 +1468,65 @@ async function renderCards() {
 async function renderMemory() {
   const memory = await api("/api/memory");
   const box = document.createElement("div");
-  for (const entry of memory.entries || []) {
+  const entries = memory.entries || [];
+  if (!state || !state.world) {
     const p = document.createElement("p");
-    p.textContent = `${entry.id}: ${entry.summary || ""}`;
+    p.textContent = t("dialog.no_world");
     box.append(p);
+    panelBody.append(box);
+    return;
   }
-  if (!memory.entries || !memory.entries.length) {
+  const stats = document.createElement("p");
+  stats.className = "section";
+  stats.textContent = entries.length
+    ? t("dialog.memory_stats", { n: entries.length, turns: memory.last_indexed_turn || 0 })
+    : t("dialog.memory_empty");
+  box.append(stats);
+  for (const entry of entries) {
+    const keys = (entry.keys || []).map(asText).filter(Boolean).join(", ") || "—";
+    const npcs = (entry.npcs || []).map(asText).filter(Boolean).join(", ") || "—";
     const p = document.createElement("p");
-    p.textContent = "—";
+    p.className = "memory-entry";
+    p.textContent = t("dialog.memory_entry", {
+      id: entry.id || "",
+      start: entry.turn_start ?? "?",
+      end: entry.turn_end ?? "?",
+      keys,
+      npcs,
+      location: asText(entry.location) || "—",
+      summary: asText(entry.summary),
+    });
     box.append(p);
   }
   panelBody.append(box);
+}
+
+async function copyText(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (error) {
+    /* LAN pages are not a secure context; the fallback below still copies. */
+  }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.append(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    copied = false;
+  }
+  area.remove();
+  return copied;
 }
 
 async function renderPrompt() {
@@ -1258,8 +1535,19 @@ async function renderPrompt() {
   const area = document.createElement("textarea");
   area.rows = 18;
   area.readOnly = true;
-  area.value = prompt ? `${prompt.system || ""}\n\n---\n\n${prompt.user || ""}` : "—";
-  panelBody.append(area);
+  const full = prompt
+    ? t("dialog.prompt_time", { time: prompt.time || "", tokens: prompt.tokens ?? "" })
+      + t("dialog.prompt_body", { system: prompt.system || "", user: prompt.user || "" })
+    : t("dialog.no_prompt");
+  area.value = full;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = t("btn.copy");
+  copy.disabled = !prompt;
+  copy.addEventListener("click", async () => {
+    if (await copyText(full)) paintNotice(t("msg.prompt_copied"));
+  });
+  panelBody.append(area, copy);
 }
 
 async function renderScene(extra) {
@@ -1310,15 +1598,50 @@ async function renderScene(extra) {
     return label;
   }
 
+  const note = document.createElement("p");
+  note.className = "error";
   const button = document.createElement("button");
   button.type = "button";
   button.className = "primary";
   button.textContent = t("btn.scene_prompt");
-  button.addEventListener("click", () => api("/api/scene", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_prompt_style: style, image_look: look }),
-  }));
+  button.addEventListener("click", async () => {
+    note.textContent = "";
+    try {
+      const result = await api("/api/scene", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_prompt_style: style, image_look: look }),
+      });
+      if (result && result.ok === false) {
+        note.className = "error";
+        note.textContent = result.notice || t("scene.needs_history");
+      } else {
+        note.className = "hint";
+        note.textContent = t("status.scene_prompt");
+      }
+    } catch (error) {
+      note.textContent = state && state.world ? t("dialog.busy") : t("dialog.no_world");
+    }
+  });
+  const promptText = scene ? scene.prompt : "";
+  const negativeText = scene ? scene.negative : "";
+  const copies = document.createElement("div");
+  copies.className = "row";
+  const copyPrompt = document.createElement("button");
+  copyPrompt.type = "button";
+  copyPrompt.textContent = t("scene.copy_prompt");
+  copyPrompt.disabled = !promptText;
+  copyPrompt.addEventListener("click", async () => {
+    if (await copyText(promptText)) paintNotice(t("scene.copied_prompt"));
+  });
+  const copyNegative = document.createElement("button");
+  copyNegative.type = "button";
+  copyNegative.textContent = t("scene.copy_negative");
+  copyNegative.disabled = !negativeText;
+  copyNegative.addEventListener("click", async () => {
+    if (await copyText(negativeText)) paintNotice(t("scene.copied_negative"));
+  });
+  copies.append(copyPrompt, copyNegative);
   panelBody.append(
     ...choiceRow("scene.format", data.image_styles || [], style, "image_style", (value) => {
       style = value;
@@ -1328,14 +1651,32 @@ async function renderScene(extra) {
       look = value;
       saveSceneOptions();
     }),
-    labeledBox(t("scene.prompt_label"), 8, scene ? scene.prompt : ""),
-    labeledBox(t("scene.negative_label"), 4, scene ? scene.negative : ""),
+    labeledBox(t("scene.prompt_label"), 8, promptText),
+    labeledBox(t("scene.negative_label"), 4, negativeText),
+    note,
     button,
+    copies,
   );
 }
 
 async function renderSettings() {
-  settingsCache = await api("/api/settings");
+  try {
+    settingsCache = await api("/api/settings");
+  } catch (error) {
+    failNotice(error);
+    const note = document.createElement("p");
+    note.className = "error";
+    note.textContent = actionErrorText(error) || t("dialog.busy");
+    panelBody.append(note);
+    return;
+  }
+  paintSettingsForm("ai");
+}
+
+function paintSettingsForm(preferredTab) {
+  if (!settingsCache) return;
+  panelBody.replaceChildren();
+  const initial = preferredTab || "ai";
   const tabs = document.createElement("div");
   tabs.className = "tabs";
   const body = document.createElement("div");
@@ -1374,11 +1715,12 @@ async function renderSettings() {
       });
       await refresh("keep");
     } catch (err) {
-      error.textContent = JSON.stringify(err.body || err.message);
+      const detail = err.body && err.body.detail;
+      error.textContent = detail === "busy" ? t("dialog.busy") : JSON.stringify(err.body || err.message);
     }
   });
   panelBody.append(lanBlock(), tabs, body, error, save);
-  show("ai");
+  show(initial);
 
   function lanBlock() {
     const box = document.createElement("div");
@@ -1442,7 +1784,13 @@ async function renderSettings() {
     input.value = settingsCache[key] ?? "";
     input.dataset.setting = key;
     input.addEventListener("input", () => {
-      settingsCache[key] = spec.type === "number" ? Number(input.value) : input.value;
+      if (spec.type === "number") {
+        if (input.value.trim() === "") return;
+        const number = Number(input.value);
+        if (Number.isFinite(number)) settingsCache[key] = number;
+        return;
+      }
+      settingsCache[key] = input.value;
     });
     wrap.append(input);
     return wrap;
@@ -1556,10 +1904,9 @@ async function renderSettings() {
     });
     actions.append(saveAs, remove);
     const presetWrap = document.createElement("label");
-    presetWrap.append(preset);
+    presetWrap.append(document.createTextNode(t("dialog.preset_name")), preset);
     box.append(
       presetWrap,
-      preset,
       actions,
       url,
       key,
@@ -1635,6 +1982,9 @@ async function renderSettings() {
     function choose(prompt) {
       selected = prompt;
       area.value = prompt.text;
+      list.querySelectorAll("button").forEach((button) => {
+        button.setAttribute("aria-pressed", button === prompt.button ? "true" : "false");
+      });
       const hasLimit = Number.isFinite(prompt.limit);
       limitWrap.hidden = !hasLimit;
       limitWrap.style.display = hasLimit ? "block" : "none";
@@ -1655,10 +2005,13 @@ async function renderSettings() {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = prompt.name || prompt.key;
+        prompt.button = button;
         button.addEventListener("click", () => choose(prompt));
         list.append(button);
       }
     }
+    const first = (settingsCache.prompts || []).flatMap((group) => group.prompts || [])[0];
+    if (first) choose(first);
     area.addEventListener("input", () => {
       if (!selected) return;
       selected.text = area.value;
@@ -1692,6 +2045,8 @@ function fitChrome() {
     ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
     : 0;
   document.documentElement.style.setProperty("--keyboard", `${Math.round(keyboard)}px`);
+  const topbar = document.querySelector(".topbar");
+  if (topbar) document.documentElement.style.setProperty("--topbar-height", `${topbar.offsetHeight}px`);
   const composer = document.querySelector("#composer");
   if (composer) {
     document.documentElement.style.setProperty("--composer-height", `${composer.offsetHeight}px`);

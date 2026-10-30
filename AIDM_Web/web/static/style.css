@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; }
 
+html {
+  scroll-padding-top: calc(var(--topbar-height, 160px) + 12px);
+  scroll-padding-bottom: calc(var(--composer-height, 180px) + 12px);
+}
+
 body {
   margin: 0;
   min-height: 100dvh;
@@ -175,6 +180,7 @@ h1 {
   font-weight: 600;
 }
 
+button:disabled { opacity: 0.45; cursor: default; }
 header button, nav button, #menu-toggle, #models-toggle, #world-toggle, .composer-actions button, dialog button, dialog input {
   background: transparent;
   color: var(--ink);
@@ -249,7 +255,6 @@ main {
   width: 100%;
   margin: 0 0 1.15em;
   padding: 8px;
-  scroll-margin-top: 108px;
   background: transparent;
   color: var(--muted);
   border: 1px dashed var(--line);
@@ -305,9 +310,9 @@ main {
 
 .composer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
-  overflow-x: auto;
 }
 #send {
   background: var(--gold);
@@ -332,8 +337,29 @@ dialog {
 #next-dialog { width: min(520px, 92vw); }
 #next-hint { white-space: pre-line; font-size: 14px; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-#panel-body { max-height: 70vh; overflow: auto; }
+dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+dialog header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#panel-close, #next-close { flex: 0 0 auto; }
+dialog input[type="checkbox"] {
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 6px 0 0;
+  padding: 0;
+  border: 0;
+  vertical-align: -0.15em;
+  accent-color: var(--gold);
+}
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+dialog header { flex: 0 0 auto; }
+#panel-body, #next-form {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .cards-layout {
   display: grid;
   grid-template-columns: minmax(160px, 220px) 1fr;
@@ -364,6 +390,9 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
 .file-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .section { margin: 16px 0 4px; color: var(--gold); font-size: 14px; }
 .card-list, .world-list, .prompt-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.card-list button[aria-pressed="true"],
+.prompt-list button[aria-pressed="true"] { color: var(--gold); }
+.memory-entry { white-space: pre-wrap; }
 .card-list button, .prompt-list button {
   display: block;
   width: 100%;
@@ -401,7 +430,10 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   .worlds-picker { flex: 1 1 auto; max-width: none; }
   #world-toggle { min-height: 44px; font-size: 16px; }
   #lang { flex: 0 0 auto; }
-  .top-actions { padding: 8px 12px 0; }
+  .top-actions { padding: 8px 12px 0; min-width: 0; }
+  .models { flex: 1 1 auto; min-width: 0; }
+  #models-toggle { max-width: 100%; }
+  .models .pop, .worlds-picker .pop { left: auto; right: 0; }
   #menu-toggle {
     display: inline-flex;
     align-items: center;
@@ -416,14 +448,22 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   nav {
     flex-wrap: nowrap;
     overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+    min-width: 0;
     padding: 0 12px 8px;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
   }
   nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #world-toggle { min-height: 44px; }
-  nav button { flex: 0 0 auto; }
+  nav button, #summary-count, #memory-count {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
   main { width: calc(100% - 16px); }
   #log { padding: 16px 14px 8px; border-radius: 12px; min-height: 36dvh; }
-  #log .earlier { scroll-margin-top: 64px; }
-  .topbar.open ~ main #log .earlier { scroll-margin-top: 220px; }
   #bar-row { flex-wrap: wrap; gap: 6px; }
   #bar { flex: 1 1 100%; }
   #bar-meta { flex: 1 1 100%; justify-content: space-between; margin-left: 0; min-width: 0; }
@@ -439,10 +479,20 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin-top: 0;
+    overflow-y: hidden;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin-top: 0;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
   }
-  .composer-actions button { flex: 0 0 auto; }
+  .composer-actions button {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
   #send { min-width: 0; min-height: 44px; }
   dialog {
     width: 100%;
@@ -451,9 +501,10 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     max-height: 100dvh;
     margin: 0;
     border-radius: 0;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px));
   }
   #next-dialog { width: 100%; }
-  #panel-body { max-height: none; }
+  #panel-body, #next-form { max-height: none; }
   .cards-layout { grid-template-columns: 1fr; }
   .cards-layout .card-list, .card-list, .world-list, .prompt-list { max-height: 28dvh; }
   dialog textarea, dialog input[type="text"], dialog input[type="number"], dialog input[type="password"], dialog input[type="search"] {
