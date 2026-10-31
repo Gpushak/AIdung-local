@@ -23,7 +23,7 @@ from .memory import (
     sync_memory_bank_after_undo,
 )
 
-from .tokens import set_model_token_scale
+from .story_cards import load_story_cards
 
 from .storage import (
     CorruptedDataError,
@@ -38,8 +38,12 @@ from .storage import (
     save_summary_cursor,
 )
 
-class SharedTurnMixin:
-    """Общие для окна и браузера шаги хода и границы суммаризации."""
+class SessionMixin:
+    def handle_input_enter(self, event):
+        if event.state & 0x1:
+            return
+        self.send_action()
+        return "break"
 
     def _introduction_cursor_delta(self, before, after):
         """Сдвиг границы, если вступление вставили или убрали в начале истории."""
@@ -60,33 +64,6 @@ class SharedTurnMixin:
             self.covered_count = clamp_summary_cursor(stored, len(self.history))
         save_summary_cursor(self.current_world_path, self.covered_count)
 
-    def note_history_revised(self, index):
-        """Правка уже сжатой реплики снимает отметку с неё и со всего, что после.
-
-        Саммари описывает старый текст, а граница — это префикс. Откатить её
-        к изменённому сообщению, иначе новый текст так и останется «покрытым».
-        """
-        if index < self.covered_count:
-            self.covered_count = max(0, int(index))
-            if self.current_world_path:
-                save_summary_cursor(self.current_world_path, self.covered_count)
-
-    def _dispatch_turn(self, target, args=(), kwargs=None):
-        kwargs = kwargs or {}
-        if self.memory_enabled:
-            self.turns_since_memory += 1
-            self.update_memory_label()
-        self.begin_action_turn()
-        Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
-
-
-class SessionMixin(SharedTurnMixin):
-    def handle_input_enter(self, event):
-        if event.state & 0x1:
-            return
-        self.send_action()
-        return "break"
-
     def initialize_world(self):
         worlds = get_world_list()
         if not worlds:
@@ -101,7 +78,6 @@ class SessionMixin(SharedTurnMixin):
         world_path = BASE_DIR / world_name
         if not world_path.exists():
             return
-        previous_lang = self._count_language()
 
         # Сначала читаем и проверяем данные, и только потом меняем состояние:
         # при повреждённом файле текущий мир должен остаться нетронутым.
@@ -116,8 +92,6 @@ class SessionMixin(SharedTurnMixin):
 
         self.current_world_path = world_path
         self.world_name = world_name
-        if self._count_language() != previous_lang:
-            set_model_token_scale(1.0)
         self.last_sent_prompt = None
         self.history = ensure_introduction_in_history(world_path, loaded_history)
         if self.history != loaded_history:
@@ -136,13 +110,7 @@ class SessionMixin(SharedTurnMixin):
         self.update_context_indicator()
 
         self.refresh_world_combobox()
-        if hasattr(self, "world_var"):
-            label = next(
-                (item for item, name in getattr(self, "_world_by_label", {}).items() if name == self.world_name),
-                "",
-            )
-            if label:
-                self.world_var.set(label)
+        self.world_var.set(self.world_name)
 
     def undo_action(self):
         if self.is_busy() or not self.history or not self.current_world_path:
@@ -220,6 +188,25 @@ class SessionMixin(SharedTurnMixin):
             self.add_player_message(user_input)
 
         self._dispatch_turn(self.process_action, (user_input,))
+
+    def _dispatch_turn(self, target, args=(), kwargs=None):
+        kwargs = kwargs or {}
+        if self.memory_enabled:
+            self.turns_since_memory += 1
+            self.update_memory_label()
+        self.begin_action_turn()
+        Thread(target=target, args=args, kwargs=kwargs, daemon=True).start()
+
+    def note_history_revised(self, index):
+        """Правка уже сжатой реплики снимает отметку с неё и со всего, что после.
+
+        Саммари описывает старый текст, а граница — это префикс. Откатить её
+        к изменённому сообщению, иначе новый текст так и останется «покрытым».
+        """
+        if index < self.covered_count:
+            self.covered_count = max(0, int(index))
+            if self.current_world_path:
+                save_summary_cursor(self.current_world_path, self.covered_count)
 
     def sync_introduction_to_history(self, intro_text):
         before = list(self.history)

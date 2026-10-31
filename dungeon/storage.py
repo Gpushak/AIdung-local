@@ -1,16 +1,20 @@
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
 from .config import (
     BASE_DIR,
     DEFAULT_API_URL,
+    DEFAULT_IMAGE_LOOK,
     DEFAULT_IMAGE_STYLE,
+    IMAGE_LOOKS,
     IMAGE_PROMPT_STYLES,
     INTRODUCTION_FILE,
     SETTINGS_FILE,
     WORLD_FILES,
+    clamp_response_limits,
 )
 from .i18n import INTRO_PREFIX, normalize_prompt_overrides
 
@@ -106,20 +110,85 @@ def ensure_introduction_in_history(world_path, history):
     return history
 
 
+# Каталог миров «Приключения». Лежит рядом с мирами песочницы и сам миром не является.
+ADVENTURE_DIR = "adventure"
+
+
 def get_world_list():
     if not BASE_DIR.exists():
         BASE_DIR.mkdir()
-    return [d.name for d in BASE_DIR.iterdir() if d.is_dir()]
+    return [d.name for d in BASE_DIR.iterdir() if d.is_dir() and d.name != ADVENTURE_DIR]
 
 
-def load_world_config(world_name):
+LANGUAGE_FILE = "language.txt"
+_CYRILLIC_LETTER = re.compile(r"[а-яёА-ЯЁ]")
+_LATIN_LETTER = re.compile(r"[A-Za-z]")
+
+
+def save_world_language(world_path, language):
+    """Запоминает, для какой локализации создан мир."""
+    lang = "en" if str(language or "").lower().startswith("en") else "ru"
+    atomic_write_text(Path(world_path) / LANGUAGE_FILE, lang + "\n")
+
+
+def read_world_language(world_path):
+    """ru, en или пусто, если по файлам мира язык не разобрать.
+
+    Новые миры хранят язык в language.txt. Старые определяются по буквам
+    вступления и описаний: кириллица — русский шаблон, латиница — английский.
+    """
+    path = Path(world_path)
+    marker = path / LANGUAGE_FILE
+    if marker.is_file():
+        text = marker.read_text(encoding="utf-8").strip().lower()
+        if text.startswith("en"):
+            return "en"
+        if text.startswith("ru"):
+            return "ru"
+    cyrillic = latin = 0
+    for fname in ("introduction.txt", "plot_basics.txt", "ai_instructions.txt", "author_notes.txt"):
+        file_path = path / fname
+        if not file_path.is_file():
+            continue
+        sample = file_path.read_text(encoding="utf-8")
+        cyrillic += len(_CYRILLIC_LETTER.findall(sample))
+        latin += len(_LATIN_LETTER.findall(sample))
+    if cyrillic == 0 and latin == 0:
+        return ""
+    return "ru" if cyrillic >= latin else "en"
+
+
+def world_entries():
+    """Список миров песочницы с языком: сначала русские, затем английские."""
+    return world_entries_in(BASE_DIR)
+
+
+def world_entries_in(root):
+    """Миры в одной папке режима. Каталог приключения в корне песочницы пропускается."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    skip_container = root.resolve() == Path(BASE_DIR).resolve()
+    items = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if skip_container and entry.name == ADVENTURE_DIR:
+            continue
+        items.append({"name": entry.name, "language": read_world_language(entry)})
+    items.sort(key=lambda item: ({"ru": 0, "en": 1}.get(item["language"], 2), item["name"].casefold()))
+    return items
+
+
+def load_world_config(world_name, root=None):
     """Читает файлы мира и историю.
 
     Возвращает (files_content, history, restored_from_backup). При повреждении
     истории без возможности восстановления бросает CorruptedDataError — вызывающий
     код обязан сообщить игроку, а не затихотно начать новую кампанию.
+    root — папка режима. Без неё мир ищется среди песочницы, как раньше.
     """
-    world_path = Path(BASE_DIR) / str(world_name)
+    world_path = Path(root or BASE_DIR) / str(world_name)
     files_content = {}
     for fname in WORLD_FILES:
         path = world_path / fname
@@ -185,8 +254,12 @@ def load_global_settings():
         "summary_enabled": True,
         "memory_enabled": True,
         "image_prompt_style": DEFAULT_IMAGE_STYLE,
+        "image_look": DEFAULT_IMAGE_LOOK,
+        "response_limits": dict(clamp_response_limits(None)),
         "language": "ru",
         "prompt_overrides": {"ru": {}, "en": {}},
+        "lan_access": True,
+        "bind_mode": "lan",
     }
     # Настройки тоже читаем с попыткой отката на .bak: потерять сохранённые
     # API-ключи из-за битого JSON неприятно, а дефолты работают и без них.
@@ -203,6 +276,9 @@ def load_global_settings():
         defaults["active_api_preset"] = ""
     if defaults.get("image_prompt_style") not in IMAGE_PROMPT_STYLES:
         defaults["image_prompt_style"] = DEFAULT_IMAGE_STYLE
+    if defaults.get("image_look") not in IMAGE_LOOKS:
+        defaults["image_look"] = DEFAULT_IMAGE_LOOK
+    defaults["response_limits"] = clamp_response_limits(defaults.get("response_limits"))
     defaults["summary_fill_percent"] = clamp_summary_fill_percent(defaults.get("summary_fill_percent", 80))
     defaults["prompt_overrides"] = normalize_prompt_overrides(defaults.get("prompt_overrides"))
     return defaults

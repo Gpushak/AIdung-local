@@ -452,8 +452,8 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=11" in page.text
-        assert "style.css?v=9" in page.text
+        assert "app.js?v=15" in page.text
+        assert "style.css?v=15" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -981,7 +981,234 @@ def test_prompt_limits_and_scene_look():
         assert stored["image_look"] == "realism"
         assert stored["image_prompt_style"] == "midjourney"
         assert stored["response_limits"]["prompt.scene_image"] == 900
+
+        marker = "MARKER_EARLY_CARD"
+        session.history = [f"Игрок: {marker} {i}" for i in range(15)]
+        session.response_limits["prompt.card_desc_gen"] = 180
+        calls.clear()
+        idle_deadline = time.time() + 3
+        while time.time() < idle_deadline and client.get("/api/state").json()["status"]["busy"]:
+            time.sleep(0.05)
+        described = client.post("/api/cards/describe", json={"title": "Страж", "description": "у ворот"})
+        assert described.status_code == 200, described.text
+        deadline = time.time() + 3
+        while time.time() < deadline and not calls:
+            time.sleep(0.05)
+        assert calls, "описание карточки не ушло в модель"
+        assert calls[-1]["max_tokens"] == 180
+        card_prompt = calls[-1]["messages"][0]["content"]
+        assert f"{marker} 0" in card_prompt
+        assert f"{marker} 14" in card_prompt
+        idle_deadline = time.time() + 3
+        while time.time() < idle_deadline and client.get("/api/state").json()["status"]["busy"]:
+            time.sleep(0.05)
+
+        before = client.get("/api/settings").json()
+        switched = client.put("/api/settings", json={"language": "en"})
+        assert switched.status_code == 200, switched.text
+        body = switched.json()
+        assert body["language"] == "en"
+        assert body["temperature"] == before["temperature"]
+        assert body["max_tokens"] == before["max_tokens"]
+        assert body["api_url"] == before["api_url"]
+        assert body["response_limits"]["prompt.card_desc_gen"] == 180
     print("OK  лимиты промптов меняются, стиль дописывается в промпт сцены")
+
+
+def test_world_guards_settings_and_startup():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        broken = tmp / "Broken"
+        broken.mkdir()
+        (broken / "history.json").write_text("{", encoding="utf-8")
+        client = TestClient(create_app())
+        state = client.get("/api/state").json()
+        assert state["world"] is None
+        assert state["notices"]
+        assert "Broken" in state["notices"][-1]
+        assert client.post("/api/worlds/open", json={"name": "Broken"}).status_code == 409
+        assert client.get("/api/state").json()["world"] is None
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        outside = Path(tempfile.mkdtemp())
+        (outside / "history.json").write_text("[]", encoding="utf-8")
+        link = tmp / "Linked"
+        link.symlink_to(outside, target_is_directory=True)
+        release = __import__("threading").Event()
+        try:
+            assert client.post("/api/worlds/open", json={"name": ".."}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": "../Camp"}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": str(outside)}).status_code == 400
+            assert client.post("/api/worlds/open", json={"name": "Linked"}).status_code == 400
+            assert client.get("/api/state").json()["world"] == "Camp"
+            assert client.delete("/api/worlds/%2e%2e").status_code == 400
+            assert (tmp / "Camp").is_dir()
+            assert client.delete("/api/worlds/Linked").status_code == 400
+            assert outside.is_dir()
+            assert (outside / "history.json").is_file()
+
+            kept = client.put("/api/settings", json={"temperature": "hot", "context_size": 0, "max_tokens": None})
+            assert kept.status_code == 200, kept.text
+            saved = kept.json()
+            assert saved["temperature"] == 0.7
+            assert saved["context_size"] == 1
+            assert saved["max_tokens"] == 300
+            tiny = client.put("/api/settings", json={"context_size": 200})
+            assert tiny.status_code == 200
+            assert tiny.json()["context_size"] == 200
+
+            empty = client.post("/api/scene")
+            assert empty.status_code == 200, empty.text
+            assert empty.json()["ok"] is False
+            assert empty.json()["notice"]
+
+            blank = client.put("/api/files/plot_basics.txt", json={"content": None})
+            assert blank.status_code == 200, blank.text
+            assert (tmp / "Camp" / "plot_basics.txt").read_text(encoding="utf-8") == ""
+
+            def blocking_read(_response, key, on_delta=None):
+                while not release.is_set() and not session.is_cancelled(key):
+                    time.sleep(0.02)
+                return "Готово", False
+
+            session._api_post = lambda payload, **kwargs: _Response()
+            session._read_response = blocking_read
+            assert client.post("/api/turn", json={"text": "ждать"}).status_code == 200
+            assert client.post("/api/summary").status_code == 409
+            assert client.post("/api/worlds", json={"name": "Other"}).status_code == 409
+            assert not (tmp / "Other").exists()
+            assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 409
+            assert client.put("/api/files/plot_basics.txt", json={"content": "нельзя"}).status_code == 409
+            assert (tmp / "Camp" / "plot_basics.txt").read_text(encoding="utf-8") == ""
+            assert client.delete("/api/worlds/Camp").status_code == 409
+            assert (tmp / "Camp").is_dir()
+        finally:
+            release.set()
+            deadline = time.time() + 3
+            while time.time() < deadline and client.get("/api/state").json()["status"]["busy"]:
+                time.sleep(0.05)
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+
+        removed = client.delete("/api/worlds/Camp")
+        assert removed.status_code == 200, removed.text
+        state = removed.json()
+        assert state["world"] is None
+        assert state["history"] == []
+        assert state["fill"]["used"] == 0
+        assert state["fill"]["ratio"] == 0
+        assert state["memory"]["entries"] == []
+        assert client.post("/api/summary").status_code == 409
+    print("OK  чужие пути закрыты, битый мир не роняет сервер, ход блокирует правки")
+
+
+def test_overlapping_jobs_start_once():
+    import tempfile
+    import threading
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        app = create_app()
+        session = app.state.session
+        client = TestClient(app)
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        client.put("/api/settings", json={"summary_enabled": False, "memory_enabled": False})
+        hold = threading.Event()
+        posts = []
+        kinds = []
+
+        def post(payload, **_kwargs):
+            posts.append(payload)
+            hold.wait(3)
+            return _Response()
+
+        def read(_response, key, on_delta=None):
+            kinds.append(key)
+            return '{"summary":"заметка","keys":["ключ"],"location":"зал","npcs":["страж"],"prompt":"hall","negative_prompt":"blur"}', False
+
+        session._api_post = post
+        session._read_response = read
+
+        def race(calls):
+            barrier = threading.Barrier(len(calls))
+            results = []
+
+            def run(fn):
+                barrier.wait()
+                results.append(bool(fn()))
+
+            threads = [threading.Thread(target=run, args=(fn,)) for fn in calls]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results
+
+        def release():
+            hold.set()
+            deadline = time.time() + 3
+            while time.time() < deadline and session.is_busy():
+                time.sleep(0.02)
+            assert not session.is_busy(), session.status_view()
+            hold.clear()
+
+        def claim_once(calls):
+            before = len(posts)
+            results = race(calls)
+            deadline = time.time() + 3
+            while time.time() < deadline and len(posts) < before + 1:
+                time.sleep(0.01)
+            assert sorted(results) == [False, True], results
+            assert len(posts) == before + 1, posts[before:]
+            release()
+
+        claim_once([
+            lambda: session.describe_card("Страж", "у ворот"),
+            lambda: session.describe_card("Страж", "у ворот"),
+        ])
+        claim_once([
+            lambda: session.describe_card("Страж", "у ворот"),
+            lambda: session.submit_turn("осмотреться"),
+        ])
+        assert sum(1 for line in session.history if line == "Игрок: осмотреться") == 1
+        claim_once([
+            lambda: session.submit_turn("шагнуть"),
+            lambda: session.submit_turn("шагнуть"),
+        ])
+        assert sum(1 for line in session.history if line == "Игрок: шагнуть") == 1
+        claim_once([lambda: session.summarize(), lambda: session.summarize()])
+        session.history = ["Игрок: осмотреться", "Мастер: В зале темно."]
+        claim_once([lambda: session.start_scene_prompt(), lambda: session.start_scene_prompt()])
+
+        session.memory_bank = {"last_indexed_turn": 0, "entries": []}
+        session.memory_enabled = True
+        session.memory_interval = 1
+        session.processing = True
+        session._schedule_summary_after_turn = True
+        session._schedule_memory_after_turn = True
+        kinds.clear()
+        hold.set()
+        session._finish_player_turn()
+        deadline = time.time() + 3
+        while time.time() < deadline and not {"summary", "memory"} <= set(kinds):
+            time.sleep(0.02)
+        from dungeon.api_stream import MEMORY, SUMMARY
+        assert SUMMARY in kinds and MEMORY in kinds, kinds
+        deadline = time.time() + 3
+        while time.time() < deadline and session.is_busy():
+            time.sleep(0.02)
+        assert not session.is_busy()
+    print("OK  два одновременных запуска не открывают вторую работу")
 
 
 def _wait_idle(client, timeout=4):
@@ -1374,6 +1601,7 @@ def test_sandbox_flags_enable_mechanics_without_moving_worlds():
     print("OK  три флага песочницы включают те же механики и не меняют список миров")
 
 
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -1394,6 +1622,8 @@ if __name__ == "__main__":
     test_finished_reply_is_settled_before_processing_ends()
     test_world_language_marks_and_english_token_scale()
     test_prompt_limits_and_scene_look()
+    test_world_guards_settings_and_startup()
+    test_overlapping_jobs_start_once()
     test_modes_keep_worlds_in_separate_folders()
     test_d20_discards_unknown_difficulty_and_uses_a_known_roll()
     test_named_foe_gets_a_card_and_unnamed_guard_does_not()

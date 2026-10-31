@@ -3,75 +3,18 @@ from datetime import datetime
 import requests
 
 from .api_stream import ACTION, DeltaBatcher
-from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, normalize_lang, t
-from .storage import read_world_language, save_history
+from .i18n import DM_PREFIX, PLAYER_PREFIX, localize_history, t
+from .storage import save_history
 from .text_utils import StreamThinkFilter, clean_dm_response, clean_stream_chunk
-from .tokens import (
-    calibration_sample,
-    count_tokens,
-    history_window_budget,
-    model_scale_observed,
-    observe_model_prompt,
-    prompt_token_count,
-    raw_count_tokens,
-    reply_tokens,
-    scale_token_count,
-    summary_due,
-)
+from .tokens import count_tokens, history_window_budget, summary_due
 
 
 class TurnMixin:
-    def _calibrate_token_scale(self):
-        """Один короткий запрос до нарезки истории, если масштаб ещё не известен.
-
-        Пока локальный счётчик не сверен с моделью, он завышает кириллицу:
-        первый ход после запуска упирается в свои 16к и в модель уходит около 10к.
-        Следующие ходы уже знают масштаб. Проба делается до сборки промпта.
-        """
-        if model_scale_observed() or getattr(self, "_calibrating_scale", False):
-            return
-        self._calibrating_scale = True
-        try:
-            sample = calibration_sample(self._count_language())
-            raw = raw_count_tokens(sample)
-            payload = self._api_payload(
-                messages=[{"role": "user", "content": sample}],
-                temperature=0,
-                max_tokens=1,
-                stream=False,
-            )
-            try:
-                response = self._api_post(payload, stream=False, timeout=30)
-                response.raise_for_status()
-                data = response.json()
-            except Exception:
-                return
-            usage = data.get("usage") if isinstance(data, dict) else None
-            if observe_model_prompt(raw, usage) and hasattr(self, "save_settings"):
-                self.save_settings()
-        finally:
-            self._calibrating_scale = False
-
-    def _count_language(self):
-        """Язык текста, по которому сверяем масштаб: язык мира, иначе язык интерфейса."""
-        path = getattr(self, "current_world_path", None)
-        if path:
-            lang = read_world_language(path)
-            if lang:
-                return lang
-        return normalize_lang(getattr(self, "language", "ru"))
-
     def process_action(self, user_input="", direction_hint=None):
-        self._last_api_usage = None
         try:
-            # Веб-режим «Приключение» дописывает факт броска к действию до обычного хода.
-            prepare = getattr(self, "prepare_adventure_action", None)
-            if prepare is not None:
-                user_input, direction_hint = prepare(user_input, direction_hint)
-            self._calibrate_token_scale()
             if direction_hint:
                 direction_hint = direction_hint.strip()
-                history_label = direction_hint
+                history_label = f"❓ {direction_hint}"
                 if direction_hint and (
                     not self.history or f"{PLAYER_PREFIX} {history_label}" != self.history[-1]
                 ):
@@ -108,8 +51,7 @@ class TurnMixin:
 
             history_text = "\n".join(localize_history(self.language, short_history))
             system_final_content = f"""{context}\n{t(self.language, 'prompt.history_header')}\n{history_text}"""
-            raw_prompt = raw_count_tokens(system_final_content) + raw_count_tokens(user_content)
-            prompt_tokens = scale_token_count(raw_prompt)
+            prompt_tokens = count_tokens(system_final_content) + count_tokens(user_content)
 
             self.last_sent_prompt = {
                 "system": system_final_content,
@@ -183,11 +125,10 @@ class TurnMixin:
 
             final_narration = clean_dm_response(ai_text)
 
-            # Сначала история, потом событие финала. В вебе after выполняется
-            # сразу: иначе страница успевает увидеть пустой черновик без ответа.
+            self.root.after(0, lambda f=final_narration: self.finalize_dm_stream(f))
+
             self.history.append(f"{DM_PREFIX} {final_narration}")
             save_history(self.current_world_path, self.history)
-            self.root.after(0, lambda f=final_narration: self.finalize_dm_stream(f))
 
             if cancelled:
                 # Частичный ответ сохраняем в истории, но фоновые задачи не
@@ -195,13 +136,7 @@ class TurnMixin:
                 self.root.after(0, lambda: self.add_system_message(self.tr("msg.action_stopped")))
                 return
 
-            usage = getattr(self, "_last_api_usage", None)
-            if observe_model_prompt(raw_prompt, usage) and hasattr(self, "save_settings"):
-                self.save_settings()
-            prompt_tokens = prompt_token_count(usage, raw_prompt)
-            if isinstance(self.last_sent_prompt, dict):
-                self.last_sent_prompt["tokens"] = prompt_tokens
-            completion_tokens = reply_tokens(usage, final_narration)
+            completion_tokens = count_tokens(final_narration)
             total_tokens = prompt_tokens + completion_tokens
 
             self.root.after(0, self.update_context_indicator)
@@ -226,10 +161,6 @@ class TurnMixin:
             if self._schedule_memory_after_turn:
                 self.turns_since_memory = 0
                 self.root.after(0, self.update_memory_label)
-
-            follow = getattr(self, "finish_adventure_action", None)
-            if follow is not None:
-                follow(user_input, direction_hint)
 
         except requests.exceptions.ConnectionError:
             self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_server")))

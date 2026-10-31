@@ -3,14 +3,10 @@ import customtkinter as ctk
 import tkinter as tk
 
 from .config import (
-    BASE_DIR,
     COLORS,
-    DEFAULT_IMAGE_LOOK,
     DEFAULT_IMAGE_STYLE,
-    IMAGE_LOOKS,
     STORY_CARDS_KEY,
     WINDOW_SIZE,
-    clamp_response_limits,
 )
 
 from .i18n import (
@@ -24,7 +20,6 @@ from .tokens import format_token_count
 from .storage import (
     get_world_list,
     load_global_settings,
-    read_world_language,
     save_global_settings,
     save_history,
 )
@@ -63,10 +58,6 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
         self.summary_enabled = settings.get("summary_enabled", True)
         self.memory_enabled = settings.get("memory_enabled", True)
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
-        self.image_look = settings.get("image_look", DEFAULT_IMAGE_LOOK)
-        if self.image_look not in IMAGE_LOOKS:
-            self.image_look = DEFAULT_IMAGE_LOOK
-        self.response_limits = clamp_response_limits(settings.get("response_limits"))
         self.covered_count = 0
         self.context_ratio = 0.0
         self.turns_since_memory = 0
@@ -155,44 +146,32 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
                 "summary_enabled": self.summary_enabled,
                 "memory_enabled": self.memory_enabled,
                 "image_prompt_style": self.image_prompt_style,
-                "image_look": self.image_look,
-                "response_limits": self.response_limits,
                 "language": self.language,
                 "prompt_overrides": self.prompt_overrides,
             }
         )
 
     def refresh_world_combobox(self):
-        names = get_world_list()
-        self._world_by_label = {}
-        labels = []
-        for name in names:
-            lang = read_world_language(BASE_DIR / name)
-            label = f"{name}  ·  {lang.upper()}" if lang in ("ru", "en") else name
-            self._world_by_label[label] = name
-            labels.append(label)
-        if not labels:
-            labels = [self.tr("no_worlds")]
+        worlds = get_world_list()
+        if not worlds:
+            worlds = [self.tr("no_worlds")]
 
-        self.world_combobox.configure(values=labels)
-        current = ""
-        if self.world_name:
-            current = next((label for label, name in self._world_by_label.items() if name == self.world_name), "")
+        self.world_combobox.configure(values=worlds)
 
-        if current:
-            self.world_var.set(current)
-        elif labels and labels[0] != self.tr("no_worlds"):
-            self.world_var.set(labels[0])
-            self.load_world(self._world_by_label[labels[0]])
+        if self.world_name and self.world_name in worlds:
+            self.world_var.set(self.world_name)
+        elif worlds and worlds[0] != self.tr("no_worlds"):
+            first_world = worlds[0]
+            self.world_var.set(first_world)
+            self.load_world(first_world)
         else:
             self.world_var.set(self.tr("no_worlds"))
 
     def on_world_selected(self, selected):
-        name = getattr(self, "_world_by_label", {}).get(selected, selected)
-        if name and name != self.tr("no_worlds") and name != self.world_name:
+        if selected and selected != self.tr("no_worlds") and selected != self.world_name:
             if self.current_world_path:
                 save_history(self.current_world_path, self.history)
-            self.load_world(name)
+            self.load_world(selected)
 
     def create_widgets(self):
         main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -228,7 +207,7 @@ class DungeonApp(DialogMixin, AIEngineMixin, ChatMixin, SessionMixin):
         )
         self.world_combobox.pack(side=ctk.LEFT, padx=10, pady=5)
 
-        add_world_btn = ctk.CTkButton(info_frame, text="+", width=30, command=self.create_world_dialog)
+        add_world_btn = ctk.CTkButton(info_frame, text="➕", width=30, command=self.create_world_dialog)
         add_world_btn.pack(side=ctk.LEFT, padx=5, pady=5)
 
         self.status_label = ctk.CTkLabel(info_frame, text=self.tr("ready"), text_color=COLORS["player_color"])

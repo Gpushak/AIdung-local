@@ -12,7 +12,6 @@ from .config import (
     COLORS,
     INTRODUCTION_FILE,
     WORLD_FILES,
-    response_token_limit,
 )
 
 from .windowing import place_window
@@ -310,7 +309,7 @@ class CardsMixin:
                 payload = self._api_payload(
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.2,
-                    max_tokens=response_token_limit(getattr(self, "response_limits", None), "prompt.card_desc_gen"),
+                    max_tokens=400,
                     stream=True,
                 )
                 response = self._api_post(payload, stream=True, timeout=120)

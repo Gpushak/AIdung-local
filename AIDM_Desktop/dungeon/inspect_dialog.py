@@ -49,7 +49,7 @@ class InspectMixin:
                 messagebox.showwarning(self.tr("dialog.empty_input"), self.tr("dialog.empty_next"), parent=win)
                 return
             win.destroy()
-            self.add_player_message(direction)
+            self.add_player_message(f"❓ {direction}")
             self._dispatch_turn(self.process_action, ("",), {"direction_hint": direction})
 
         def handle_enter(event):
@@ -256,7 +256,7 @@ class InspectMixin:
         ctk.CTkButton(btn_frame, text=self.tr("btn.copy"), command=copy_to_clipboard).pack(side=ctk.LEFT)
         ctk.CTkButton(btn_frame, text=self.tr("btn.close_x"), command=win.destroy, fg_color="gray").pack(side=ctk.RIGHT)
 
-    def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd", look="none"):
+    def show_scene_prompt(self, scene_prompt, negative_prompt, style="sd"):
         win = ctk.CTkToplevel(self.root)
         win.title(self.tr("btn.scene_prompt"))
         win.transient(self.root)
@@ -264,10 +264,9 @@ class InspectMixin:
         # Окно намеренно немодальное: промпт обычно уходит в стороннюю
         # программу (например A1111/ComfyUI), и закрывать окно не хочется.
 
-        caption = self.tr("dialog.image_style") + " " + self.tr(f"image_style.{style}")
-        if look and look != "none":
-            caption += "  ·  " + self.tr(f"image_look.{look}")
-        ctk.CTkLabel(win, text=caption, text_color=COLORS["accent"]).pack(anchor=tk.W, padx=15, pady=(12, 0))
+        ctk.CTkLabel(
+            win, text=self.tr("dialog.image_style") + " " + self.tr(f"image_style.{style}"), text_color=COLORS["accent"]
+        ).pack(anchor=tk.W, padx=15, pady=(12, 0))
 
         def labeled_box(parent, label, text, row):
             ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=13, weight="bold")).grid(

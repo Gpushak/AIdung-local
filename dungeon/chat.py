@@ -55,11 +55,11 @@ class ChatMixin:
                 if is_player_msg(msg):
                     text = player_text(msg)
                     if text:
-                        self.text_area.insert(tk.END, f"\n🎮 {text}\n", "player")
+                        self.text_area.insert(tk.END, f"\n{text}\n", "player")
                 elif is_dm_msg(msg):
-                    self.text_area.insert(tk.END, f"\n📜 {dm_text(msg)}\n", "dm")
+                    self.text_area.insert(tk.END, f"\n{dm_text(msg)}\n", "dm")
                 elif is_intro_msg(msg):
-                    self.text_area.insert(tk.END, f"\n📖 {intro_text(msg)}\n", "intro")
+                    self.text_area.insert(tk.END, f"\n{intro_text(msg)}\n", "intro")
                 else:
                     self.text_area.insert(tk.END, f"\n{msg}\n", "system")
         self.text_area.configure(state="disabled")
@@ -156,7 +156,7 @@ class ChatMixin:
 
     def add_player_message(self, message):
         self.text_area.configure(state="normal")
-        self.text_area.insert(tk.END, f"\n🎮 {message}\n", "player")
+        self.text_area.insert(tk.END, f"\n{message}\n", "player")
         self.text_area.configure(state="disabled")
         self.text_area.see(tk.END)
 

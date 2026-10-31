@@ -203,6 +203,7 @@ def test_memory_summary_scene_and_card_description():
         assert "Страж кивает" in _history_text(state)
         bank = client.get("/api/memory").json()
         assert bank["entries"]
+        assert bank["last_indexed_turn"] >= 1
         assert bank["entries"][-1]["summary"] == "нашли ключ"
         assert bank["entries"][-1]["keys"] == ["ключ"]
         stored = json.loads((tmp / "Camp" / "memory_bank.json").read_text(encoding="utf-8"))
@@ -215,10 +216,11 @@ def test_memory_summary_scene_and_card_description():
         assert cursor["covered_count"] == len(session.history)
 
         assert client.post("/api/scene").status_code == 200
-        _wait_idle(client)
+        ready = _wait_idle(client)
         scene = client.get("/api/scene").json()["scene"]
         assert scene["prompt"] == "torchlight hall"
         assert scene["negative"] == "blur"
+        assert ready["notices"][-1] == "Промпт сцены готов."
 
         assert client.post("/api/cards/describe", json={"title": "Страж", "description": "у ворот"}).status_code == 200
         deadline = time.time() + 3

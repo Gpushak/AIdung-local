@@ -18,10 +18,8 @@ from .i18n import default_templates
 from .storage import (
     format_introduction_history,
     get_world_list,
-    read_world_language,
     save_history,
     save_world_files,
-    save_world_language,
 )
 
 from .windowing import place_window
@@ -53,12 +51,8 @@ class WorldsMixin:
         )
         listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
 
-        self._world_names = get_world_list()
-        listbox.delete(0, tk.END)
-        for name in self._world_names:
-            lang = read_world_language(BASE_DIR / name)
-            mark = f"  ·  {lang.upper()}" if lang in ("ru", "en") else ""
-            listbox.insert(tk.END, f"{name}{mark}")
+        for w in get_world_list():
+            listbox.insert(tk.END, w)
 
         btn_frame = ctk.CTkFrame(win, fg_color="transparent")
         btn_frame.pack(fill=ctk.X, padx=20, pady=10)
@@ -67,7 +61,7 @@ class WorldsMixin:
             sel = listbox.curselection()
             if not sel:
                 return
-            name = self._world_names[sel[0]]
+            name = listbox.get(sel[0])
             win.destroy()
             self.load_world(name)
 
@@ -75,14 +69,13 @@ class WorldsMixin:
             sel = listbox.curselection()
             if not sel:
                 return
-            name = self._world_names[sel[0]]
+            name = listbox.get(sel[0])
             if messagebox.askyesno(self.tr("dialog.delete_world"), self.tr("dialog.delete_world_q", name=name)):
                 remaining_worlds = [w for w in get_world_list() if w != name]
                 current_world_was_deleted = self.world_name == name
 
                 shutil.rmtree(BASE_DIR / name)
                 listbox.delete(sel[0])
-                del self._world_names[sel[0]]
 
                 if current_world_was_deleted:
                     self.current_world_path = None
@@ -157,7 +150,6 @@ class WorldsMixin:
             content = {fname: w.get("1.0", tk.END).strip() for fname, w in tabs.items()}
             world_path = BASE_DIR / name
             save_world_files(world_path, content)
-            save_world_language(world_path, self.language)
             save_story_cards(world_path, new_world_cards)
             intro = content.get(INTRODUCTION_FILE, "").strip()
             initial_history = [format_introduction_history(intro)] if intro else []
