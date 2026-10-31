@@ -1379,6 +1379,107 @@ def test_d20_discards_unknown_difficulty_and_uses_a_known_roll():
     print("OK  чужая сложность отбрасывается, известный d20 попадает в промпт")
 
 
+def test_d20_prompt_names_each_outcome():
+    import tempfile
+
+    import dungeon.adventure as adventure
+    from dungeon.i18n import t
+    from dungeon.tokens import set_model_token_scale
+
+    assert adventure.roll_outcome(20, 19) == "critical_success"
+    assert adventure.roll_outcome(20, 25) == "critical_success"
+    assert adventure.roll_outcome(13, 13) == "success"
+    assert adventure.roll_outcome(12, 13) == "failure"
+    assert adventure.roll_outcome(1, 10) == "critical_failure"
+    assert adventure.roll_outcome(1, 1) == "critical_failure"
+
+    cues = {
+        lang: {name: t(lang, f"check.cue.{name}") for name in (
+            "critical_success", "success", "failure", "critical_failure",
+        )}
+        for lang in ("ru", "en")
+    }
+    assert len(set(cues["ru"].values())) == 4
+    assert len(set(cues["en"].values())) == 4
+    assert "Описывай" in cues["ru"]["success"]
+    assert "Narrate" in cues["en"]["success"]
+
+    cases = [
+        ("ru", 20, 19, "critical_success"),
+        ("ru", 13, 13, "success"),
+        ("ru", 12, 13, "failure"),
+        ("ru", 1, 10, "critical_failure"),
+        ("en", 20, 19, "critical_success"),
+        ("en", 16, 13, "success"),
+        ("en", 9, 10, "failure"),
+        ("en", 1, 19, "critical_failure"),
+    ]
+    step = {"i": 0}
+
+    set_model_token_scale(0.8)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/mode", json={"play_mode": "adventure"}).status_code == 200
+            assert client.post("/api/worlds", json={"name": "Quest"}).status_code == 200
+            assert client.put("/api/hero", json={"name": "Мира", "strength": 10}).status_code == 200
+            calls = []
+
+            def fake_roll():
+                rolled = cases[step["i"]][1]
+                step["i"] += 1
+                return rolled
+
+            adventure.roll_d20 = fake_roll
+
+            def post(payload, **_kwargs):
+                calls.append(payload)
+                return _Response()
+
+            def read(_response, _key, on_delta=None):
+                payload = calls[-1]
+                content = payload["messages"][-1]["content"]
+                if payload["messages"][0]["role"] == "system":
+                    if on_delta:
+                        on_delta("Готово")
+                    return "Готово", False
+                if "characters" in content:
+                    return '{"equipment":"","appearance":"","stats":{},"characters":[]}', False
+                _lang, _roll, dc, _outcome = cases[step["i"]]
+                return json.dumps({"needed": True, "name": "Сила", "dc": dc}, ensure_ascii=False), False
+
+            session._api_post = post
+            session._read_response = read
+            set_model_token_scale(0.8)
+            for lang, roll, _dc, outcome in cases:
+                session.language = lang
+                before = len(calls)
+                assert client.post("/api/turn", json={"text": "толкнуть дверь"}).status_code == 200
+                state = _wait_idle(client)
+                narration = [
+                    item for item in calls[before:]
+                    if item["messages"][0]["role"] == "system"
+                ]
+                assert narration, calls[before:]
+                user = narration[-1]["messages"][-1]["content"]
+                expected = cues[lang][outcome]
+                assert expected in user, user
+                for other, text in cues[lang].items():
+                    if other != outcome:
+                        assert text not in user
+                assert str(roll) in user
+                player = [row for row in state["history"] if row["kind"] == "player"][-1]
+                assert str(roll) in player["text"]
+                assert expected not in player["text"]
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  промпт называет все четыре исхода броска на языке хода")
+
+
 def test_named_foe_gets_a_card_and_unnamed_guard_does_not():
     import tempfile
 
@@ -1626,6 +1727,7 @@ if __name__ == "__main__":
     test_overlapping_jobs_start_once()
     test_modes_keep_worlds_in_separate_folders()
     test_d20_discards_unknown_difficulty_and_uses_a_known_roll()
+    test_d20_prompt_names_each_outcome()
     test_named_foe_gets_a_card_and_unnamed_guard_does_not()
     test_sandbox_flags_enable_mechanics_without_moving_worlds()
     print("ALL WEB TESTS PASSED")

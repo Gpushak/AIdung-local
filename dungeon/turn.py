@@ -82,6 +82,12 @@ class TurnMixin:
                     self.history.append(f"{PLAYER_PREFIX} {user_input}")
                 user_content = user_input if user_input else t(self.language, "prompt.continue")
 
+            cue = getattr(self, "roll_narration_cue", None)
+            if cue is not None:
+                extra = cue()
+                if extra:
+                    user_content = f"{user_content.rstrip()}\n{extra}"
+
             retrieval_query = self._retrieval_query(user_content)
             context = self._static_context_text(retrieval_query)
 
