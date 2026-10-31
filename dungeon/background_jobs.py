@@ -6,12 +6,19 @@ from threading import Thread
 import requests
 
 from .api_stream import MEMORY, SCENE, SCENE_TURNS
+from .config import (
+    DEFAULT_IMAGE_LOOK,
+    IMAGE_LOOKS,
+    apply_image_look,
+    response_token_limit,
+)
 from .i18n import DM_PREFIX, localize_history, t
 from .memory import (
     count_completed_turns,
     get_recent_turn_messages,
     get_turn_messages,
     parse_memory_index_response,
+    save_memory_bank,
 )
 from .story_cards import format_story_cards_block, retrieve_relevant_cards
 
@@ -60,7 +67,7 @@ class JobsMixin:
             payload = self._api_payload(
                 messages=[{"role": "user", "content": prompt + "\n\n" + t(self.language, "prompt.no_reasoning")}],
                 temperature=0.2,
-                max_tokens=350,
+                max_tokens=response_token_limit(getattr(self, "response_limits", None), "prompt.memory_index"),
                 stream=True,
             )
             response = self._api_post(payload, stream=True, timeout=120)
@@ -143,6 +150,9 @@ class JobsMixin:
         try:
             plot_basics, history_fragment, cards_block = self._scene_context()
             style = self.image_prompt_style
+            look = getattr(self, "image_look", DEFAULT_IMAGE_LOOK)
+            if look not in IMAGE_LOOKS:
+                look = DEFAULT_IMAGE_LOOK
             prompt = t(
                 self.language,
                 "prompt.scene_image",
@@ -151,10 +161,12 @@ class JobsMixin:
                 cards_block=cards_block or t(self.language, "prompt.none"),
                 style_rules=t(self.language, f"prompt.scene_style.{style}"),
             )
+            if look != "none":
+                prompt += "\n\n" + t(self.language, f"prompt.scene_look.{look}")
             payload = self._api_payload(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=700,
+                max_tokens=response_token_limit(getattr(self, "response_limits", None), "prompt.scene_image"),
                 stream=True,
             )
             response = self._api_post(payload, stream=True, timeout=120)
@@ -164,7 +176,8 @@ class JobsMixin:
                 return
 
             scene_prompt, negative = self._parse_scene_response(raw)
-            self.root.after(0, lambda: self.show_scene_prompt(scene_prompt, negative, style))
+            scene_prompt = apply_image_look(scene_prompt, look)
+            self.root.after(0, lambda: self.show_scene_prompt(scene_prompt, negative, style, look))
 
         except requests.exceptions.ConnectionError:
             self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_server")))

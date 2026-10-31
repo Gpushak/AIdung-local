@@ -9,10 +9,7 @@ from tkinter import (
 
 from .config import (
     COLORS,
-    DEFAULT_RESPONSE_LIMITS,
-    IMAGE_LOOKS,
     IMAGE_PROMPT_STYLES,
-    clamp_response_limits,
 )
 
 from .i18n import (
@@ -229,16 +226,7 @@ class SettingsMixin:
             values=[self.tr(f"image_style.{s}") for s in IMAGE_PROMPT_STYLES],
         ).pack(anchor=tk.W, padx=10, pady=5)
 
-        ctk.CTkLabel(game, text=self.tr("dialog.image_look")).pack(anchor=tk.W, padx=10, pady=(10, 5))
-        image_look_var = ctk.StringVar(value=self.tr(f"image_look.{self.image_look}"))
-        ctk.CTkOptionMenu(
-            game,
-            variable=image_look_var,
-            values=[self.tr(f"image_look.{name}") for name in IMAGE_LOOKS],
-        ).pack(anchor=tk.W, padx=10, pady=5)
-
         prompt_drafts = {}
-        limit_drafts = {}
         prompt_current = {"key": None}
 
         def stored_prompt(key):
@@ -254,8 +242,6 @@ class SettingsMixin:
             if key is None:
                 return
             prompt_drafts[key] = prompt_editor.get("1.0", tk.END).strip()
-            if key in DEFAULT_RESPONSE_LIMITS:
-                limit_drafts[key] = limit_entry.get().strip()
 
         def show_prompt(key):
             flush_prompt_editor()
@@ -268,18 +254,6 @@ class SettingsMixin:
                 prompt_hint.configure(text=self.tr("dialog.prompt_fields", fields=shown))
             else:
                 prompt_hint.configure(text=self.tr("dialog.prompt_fields_none"))
-            if key in DEFAULT_RESPONSE_LIMITS:
-                raw = limit_drafts.get(key)
-                if raw is None:
-                    raw = str(self.response_limits.get(key, DEFAULT_RESPONSE_LIMITS[key]))
-                limit_entry.delete(0, tk.END)
-                limit_entry.insert(0, raw)
-            reset_prompt_btn.pack_forget()
-            if key in DEFAULT_RESPONSE_LIMITS:
-                limit_row.pack(fill=tk.X, pady=(6, 0))
-            else:
-                limit_row.pack_forget()
-            reset_prompt_btn.pack(anchor=tk.W, pady=(6, 0))
 
         def reset_prompt():
             key = prompt_current["key"]
@@ -336,12 +310,9 @@ class SettingsMixin:
         prompt_editor.bind("<Button-3>", self.show_context_menu)
         prompt_hint = ctk.CTkLabel(prompt_right, text="", text_color="gray", anchor="w", justify=tk.LEFT)
         prompt_hint.pack(fill=tk.X, pady=(6, 0))
-        limit_row = ctk.CTkFrame(prompt_right, fg_color="transparent")
-        ctk.CTkLabel(limit_row, text=self.tr("dialog.response_limit")).pack(anchor=tk.W)
-        limit_entry = ctk.CTkEntry(limit_row)
-        limit_entry.pack(fill=tk.X, pady=(4, 0))
-        reset_prompt_btn = ctk.CTkButton(prompt_right, text=self.tr("btn.reset_prompt"), width=120, command=reset_prompt)
-        reset_prompt_btn.pack(anchor=tk.W, pady=(6, 0))
+        ctk.CTkButton(prompt_right, text=self.tr("btn.reset_prompt"), width=120, command=reset_prompt).pack(
+            anchor=tk.W, pady=(6, 0)
+        )
         if first_prompt_key is not None:
             show_prompt(first_prompt_key)
             prompt_list.selection_set(1)
@@ -379,9 +350,6 @@ class SettingsMixin:
             }
             overrides[lang] = current
             self.prompt_overrides = set_prompt_overrides(overrides)
-            merged_limits = dict(self.response_limits)
-            merged_limits.update(limit_drafts)
-            self.response_limits = clamp_response_limits(merged_limits)
 
         def apply_settings():
             problems = prompt_problems()
@@ -420,11 +388,6 @@ class SettingsMixin:
             for style in IMAGE_PROMPT_STYLES:
                 if self.tr(f"image_style.{style}") == selected_style:
                     self.image_prompt_style = style
-                    break
-            selected_look = image_look_var.get()
-            for look in IMAGE_LOOKS:
-                if self.tr(f"image_look.{look}") == selected_look:
-                    self.image_look = look
                     break
             self.save_global_settings()
             self.update_toggle_buttons()

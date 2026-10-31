@@ -104,27 +104,6 @@ def retrieve_relevant_cards(query, cards_data, top_k=5, min_score=1):
     return matched
 
 
-def description_text(value):
-    """Карточка иногда хранит описание объектом полей, а не строкой."""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (int, float, bool)):
-        return str(value)
-    if isinstance(value, list):
-        parts = [description_text(item) for item in value]
-        return ", ".join(part for part in parts if part)
-    if isinstance(value, dict):
-        lines = []
-        for key, item in value.items():
-            text = description_text(item)
-            if text:
-                lines.append(f"{key}: {text}")
-        return "\n".join(lines)
-    return str(value)
-
-
 def format_story_cards_block(cards, lang="ru"):
     if not cards:
         return ""
@@ -136,5 +115,5 @@ def format_story_cards_block(cards, lang="ru"):
             if triggers
             else t(lang, "prompt.card_always")
         )
-        block += f"[{card['title']}]{trigger_hint}\n{description_text(card.get('description', ''))}\n\n"
+        block += f"[{card['title']}]{trigger_hint}\n{card.get('description', '')}\n\n"
     return block

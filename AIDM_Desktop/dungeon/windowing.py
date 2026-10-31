@@ -72,6 +72,22 @@ def place_window(win, size, parent=None, reserve=TASKBAR_RESERVE):
     win.geometry(f"{width}x{height}+{x}+{y}")
 
 
+def center_window(win, parent=None, reserve=TASKBAR_RESERVE):
+    """Сдвигает уже созданное окно в центр, не меняя его размер.
+
+    Используется для главного окна, размер которого к этому моменту известен.
+    """
+    win.update_idletasks()
+    screen_w = win.winfo_screenwidth()
+    screen_h = win.winfo_screenheight()
+    width, height = win.winfo_width(), win.winfo_height()
+    if width <= 1 or height <= 1:
+        return
+    width, height = fit_to_screen(width, height, screen_w, screen_h, reserve)
+    x, y = centered_position(width, height, screen_w, screen_h, _visible_rect(parent), reserve)
+    win.geometry(f"{width}x{height}+{x}+{y}")
+
+
 def _visible_rect(parent):
     """Прямоугольник видимого родительского окна или None."""
     if parent is None:

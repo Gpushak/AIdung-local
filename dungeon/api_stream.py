@@ -49,6 +49,22 @@ def _raw_content(value):
     return "".join(parts)
 
 
+def _remember_usage(data, usage_box):
+    """Запоминает usage из чанка, если сервер прислал счётчик модели.
+
+    В потоке usage обычно лежит в последнем чанке и может прийти без текста.
+    """
+    if usage_box is None or not isinstance(data, dict):
+        return
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return
+    if "completion_tokens" not in usage and "prompt_tokens" not in usage:
+        return
+    usage_box.clear()
+    usage_box.update(usage)
+
+
 def _delta_content(data):
     """Текст одной дельты потока (choices[0].delta.content)."""
     choice = _first_choice(data)
@@ -62,13 +78,14 @@ def _delta_content(data):
     return _raw_content(message)
 
 
-def _iter_response_deltas(response):
+def _iter_response_deltas(response, usage_box=None):
     """Отдаёт текстовые дельты из ответа OpenAI-совместимого API.
 
     Понимает и поток SSE, и обычный JSON: если сервер проигнорировал
     stream, тело разбирается как единый объект и отдаётся одной дельтой.
     Благодаря общему чтению любая генерация (ответ Мастера, суммаризация,
     память, описание карточки) принимает одинаковый прерываемый цикл.
+    usage_box, если передан, заполняется последним объектом usage.
     """
     decoder = codecs.getincrementaldecoder("utf-8")("ignore")
     buffer = ""
@@ -80,6 +97,7 @@ def _iter_response_deltas(response):
             data = json.loads(line[5:].strip())
         except ValueError:
             return ""
+        _remember_usage(data, usage_box)
         return _delta_content(data)
 
     # chunk_size=None заставляет urllib3 копить данные в буфер до упора: текст
@@ -123,6 +141,7 @@ def _iter_response_deltas(response):
             data = json.loads("\n".join(body_lines))
         except ValueError:
             return
+        _remember_usage(data, usage_box)
         content = extract_message_text(_first_choice(data).get("message"))
         if content:
             yield content
@@ -178,6 +197,9 @@ class ApiMixin:
         # DeepSeek-specific parameters
         payload["thinking"] = {"enabled": False}
         payload["no_thinking"] = True
+        if fields.get("stream"):
+            # Без этого поток не содержит usage, и «Ответ» приходится оценивать локально.
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
     def _api_post(self, payload, **request_kwargs):
@@ -195,6 +217,7 @@ class ApiMixin:
                     "chat_template_kwargs",
                     "thinking",
                     "no_thinking",
+                    "stream_options",
                 }
             }
             if stripped != payload:
@@ -243,8 +266,10 @@ class ApiMixin:
         """
         parts = []
         cancelled = False
+        usage = {}
+        self._last_api_usage = None
         try:
-            for delta in _iter_response_deltas(response):
+            for delta in _iter_response_deltas(response, usage):
                 if self.is_cancelled(cancel_key):
                     cancelled = True
                     break
@@ -258,4 +283,6 @@ class ApiMixin:
             # Закрытие соединения освобождает сокет и срывает генерацию на
             # стороне сервера, а не просто перестаёт читать поток.
             response.close()
+        if usage:
+            self._last_api_usage = dict(usage)
         return strip_reasoning_blocks("".join(parts)).strip(), cancelled

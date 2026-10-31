@@ -9,7 +9,7 @@ dist/
 
 # Сборка и релизы
 App_finale/
-AIDM_Web/App_web/
+App_web/
 *.zip
 versions/
 
