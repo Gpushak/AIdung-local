@@ -64,6 +64,10 @@ class TurnMixin:
     def process_action(self, user_input="", direction_hint=None):
         self._last_api_usage = None
         try:
+            # Веб-режим «Приключение» дописывает факт броска к действию до обычного хода.
+            prepare = getattr(self, "prepare_adventure_action", None)
+            if prepare is not None:
+                user_input, direction_hint = prepare(user_input, direction_hint)
             self._calibrate_token_scale()
             if direction_hint:
                 direction_hint = direction_hint.strip()
@@ -222,6 +226,10 @@ class TurnMixin:
             if self._schedule_memory_after_turn:
                 self.turns_since_memory = 0
                 self.root.after(0, self.update_memory_label)
+
+            follow = getattr(self, "finish_adventure_action", None)
+            if follow is not None:
+                follow(user_input, direction_hint)
 
         except requests.exceptions.ConnectionError:
             self.root.after(0, lambda: self.add_system_message(self.tr("msg.no_server")))

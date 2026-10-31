@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>AIDM</title>
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="stylesheet" href="/static/style.css?v=14">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
   <div class="topbar">
@@ -17,6 +17,13 @@
           <span id="models-current" hidden></span>
         </button>
         <div id="models-menu" class="pop" role="menu" hidden></div>
+      </div>
+      <div class="modes">
+        <button type="button" id="modes-toggle" aria-haspopup="menu" aria-expanded="false">
+          <span data-i18n="btn.modes">Режимы</span>
+          <span id="modes-current">Песочница</span>
+        </button>
+        <div id="modes-menu" class="pop" role="menu" hidden></div>
       </div>
     </div>
     <div id="topbar-body">
@@ -87,6 +94,44 @@
     </form>
   </dialog>
 
+  <dialog id="hero-dialog">
+    <header>
+      <strong data-i18n="hero.title">Карточка героя</strong>
+      <button type="button" id="hero-close" data-i18n="btn.close">Закрыть</button>
+    </header>
+    <form id="hero-form">
+      <p class="hint" data-i18n="hero.required">Заполните карточку героя, чтобы начать ход.</p>
+      <p id="hero-error" class="error"></p>
+      <label><span data-i18n="hero.name">Имя</span><input id="hero-name" type="text" required></label>
+      <label><span data-i18n="hero.appearance">Внешность</span><textarea id="hero-appearance" rows="3"></textarea></label>
+      <label><span data-i18n="hero.equipment">Снаряжение</span><textarea id="hero-equipment" rows="3"></textarea></label>
+      <div class="hero-stats">
+        <label><span data-i18n="hero.strength">Сила</span><input id="hero-strength" type="number" min="1" max="30" value="10"></label>
+        <label><span data-i18n="hero.dexterity">Ловкость</span><input id="hero-dexterity" type="number" min="1" max="30" value="10"></label>
+        <label><span data-i18n="hero.constitution">Телосложение</span><input id="hero-constitution" type="number" min="1" max="30" value="10"></label>
+        <label><span data-i18n="hero.intelligence">Интеллект</span><input id="hero-intelligence" type="number" min="1" max="30" value="10"></label>
+        <label><span data-i18n="hero.wisdom">Мудрость</span><input id="hero-wisdom" type="number" min="1" max="30" value="10"></label>
+        <label><span data-i18n="hero.charisma">Харизма</span><input id="hero-charisma" type="number" min="1" max="30" value="10"></label>
+      </div>
+      <div class="row">
+        <button type="submit" class="primary" data-i18n="btn.save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="stat-dialog">
+    <header>
+      <strong data-i18n="hero.confirm_title">Изменить характеристики?</strong>
+      <button type="button" id="stat-close" data-i18n="btn.close">Закрыть</button>
+    </header>
+    <p class="hint" data-i18n="hero.confirm_hint">Сцена предлагает изменить характеристики. Снаряжение и внешность уже записаны.</p>
+    <div id="stat-list"></div>
+    <div class="row">
+      <button type="button" id="stat-accept" class="primary" data-i18n="hero.confirm">Применить</button>
+      <button type="button" id="stat-reject" data-i18n="hero.reject">Оставить как есть</button>
+    </div>
+  </dialog>
+
   <dialog id="panel">
     <header>
       <strong id="panel-title"></strong>
@@ -95,6 +140,6 @@
     <div id="panel-body"></div>
   </dialog>
 
-  <script src="/static/app.js?v=14"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

@@ -353,7 +353,10 @@ async function selectPreset(name) {
 }
 
 function setModelsOpen(open) {
-  if (open) setWorldsOpen(false);
+  if (open) {
+    setWorldsOpen(false);
+    setModesOpen(false);
+  }
   const menu = document.querySelector("#models-menu");
   const toggle = document.querySelector("#models-toggle");
   menu.hidden = !open;
@@ -435,8 +438,118 @@ async function openWorld(name) {
   }
 }
 
+let heroAskedFor = "";
+
+function paintMode(snap) {
+  const mode = snap && snap.play_mode === "adventure" ? "adventure" : "sandbox";
+  if (mode === "adventure") document.documentElement.dataset.mode = "adventure";
+  else delete document.documentElement.dataset.mode;
+  const current = document.querySelector("#modes-current");
+  if (current) current.textContent = t(mode === "adventure" ? "mode.adventure" : "mode.sandbox");
+  const menu = document.querySelector("#modes-menu");
+  if (!menu) return;
+  menu.replaceChildren();
+  for (const id of ["sandbox", "adventure"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitemradio");
+    button.setAttribute("aria-checked", id === mode ? "true" : "false");
+    button.textContent = t(`mode.${id}`);
+    button.addEventListener("click", () => selectMode(id));
+    menu.append(button);
+  }
+}
+
+async function selectMode(mode) {
+  setModesOpen(false);
+  if (state && state.play_mode === mode) return;
+  heroAskedFor = "";
+  applySnapshot(await api("/api/mode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ play_mode: mode }),
+  }), "end");
+}
+
+const HERO_STATS = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
+
+function heroField(id) {
+  return document.querySelector(`#hero-${id}`);
+}
+
+function openHeroDialog() {
+  const hero = (state && state.hero) || {};
+  heroField("name").value = hero.name || "";
+  heroField("appearance").value = hero.appearance || "";
+  heroField("equipment").value = hero.equipment || "";
+  for (const key of HERO_STATS) {
+    const input = heroField(key);
+    const value = Number(hero[key]);
+    input.value = Number.isFinite(value) && value > 0 ? String(value) : "10";
+  }
+  const error = document.querySelector("#hero-error");
+  if (error) error.textContent = "";
+  const dialog = document.querySelector("#hero-dialog");
+  if (!dialog.open) dialog.showModal();
+  heroField("name").focus();
+}
+
+function maybeAskHero(snap) {
+  if (!snap || !snap.needs_hero) return;
+  const key = snap.world || "";
+  if (heroAskedFor === key) return;
+  heroAskedFor = key;
+  openHeroDialog();
+}
+
+function paintPending(snap) {
+  const dialog = document.querySelector("#stat-dialog");
+  if (!dialog) return;
+  const pending = snap && snap.pending_stats && snap.pending_stats.stats;
+  const keys = pending ? Object.keys(pending) : [];
+  if (!keys.length) {
+    if (dialog.open) dialog.close();
+    return;
+  }
+  const list = document.querySelector("#stat-list");
+  const current = snap.pending_stats.current || {};
+  list.replaceChildren();
+  for (const key of keys) {
+    const row = document.createElement("p");
+    row.textContent = `${t(`hero.${key}`)}: ${current[key] ?? ""} → ${pending[key]}`;
+    list.append(row);
+  }
+  if (!dialog.open) dialog.showModal();
+}
+
+async function resolveStats(accept) {
+  const dialog = document.querySelector("#stat-dialog");
+  if (dialog.open) dialog.close();
+  applySnapshot(await api("/api/hero/stats", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accept }),
+  }), "keep");
+}
+
+function setModesOpen(open) {
+  if (open) {
+    setModelsOpen(false);
+    setWorldsOpen(false);
+  }
+  const menu = document.querySelector("#modes-menu");
+  const toggle = document.querySelector("#modes-toggle");
+  if (!menu || !toggle) return;
+  menu.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.closest(".modes").classList.toggle("open", open);
+}
+
 function setWorldsOpen(open) {
-  if (open) setModelsOpen(false);
+  if (open) {
+    setModelsOpen(false);
+    setModesOpen(false);
+  }
   const menu = document.querySelector("#world-menu");
   const toggle = document.querySelector("#world-toggle");
   menu.hidden = !open;
@@ -499,6 +612,9 @@ function applySnapshot(snap, mode = "end") {
   settleFresh(snap);
   paintWorlds();
   paintModels();
+  paintMode(snap);
+  paintPending(snap);
+  maybeAskHero(snap);
   paintFill(snap.fill);
   paintStatus(snap.status);
   paintNotice((snap.notices || []).at(-1) || "");
@@ -507,15 +623,18 @@ function applySnapshot(snap, mode = "end") {
 }
 
 function snapshotHasPlayer(snap, text) {
+  const matches = (row) => Boolean(row && row.kind === "player" && text && (
+    row.text === text || row.text.startsWith(`${text}\n`)
+  ));
   const rows = snap.history || [];
   if (pendingIndex == null) {
     const last = [...rows].reverse().find((row) => row.kind === "player");
-    return Boolean(last && last.text === text);
+    return matches(last);
   }
   const exact = rows.find((row) => row.index === pendingIndex);
-  if (exact) return exact.kind === "player" && exact.text === text;
+  if (exact) return matches(exact);
   return (snap.history_total || 0) > pendingIndex && rows.some((row) => (
-    row.kind === "player" && row.index >= pendingIndex && row.text === text
+    matches(row) && row.index >= pendingIndex
   ));
 }
 
@@ -738,6 +857,10 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
     nextError.textContent = t("dialog.empty_next");
     return;
   }
+  if (state && state.needs_hero) {
+    openHeroDialog();
+    return;
+  }
   if (sendingTurn || document.body.classList.contains("busy")) {
     nextError.textContent = t("dialog.busy");
     return;
@@ -755,6 +878,7 @@ document.querySelector("#next-form").addEventListener("submit", async (event) =>
   } catch (error) {
     retractPlayerLine(direction);
     nextText.value = direction;
+    if (error.body && error.body.detail === "hero") openHeroDialog();
     nextError.textContent = actionErrorText(error) || t("dialog.busy");
   } finally {
     sendingTurn = false;
@@ -771,6 +895,10 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
     }
     return;
   }
+  if (state && state.needs_hero) {
+    openHeroDialog();
+    return;
+  }
   if (sendingTurn) return;
   const text = actionEl.value.trim();
   actionEl.value = "";
@@ -784,6 +912,7 @@ document.querySelector("#composer").addEventListener("submit", async (event) => 
   } catch (error) {
     retractPlayerLine(text);
     actionEl.value = text;
+    if (error.body && error.body.detail === "hero") openHeroDialog();
     failNotice(error);
   } finally {
     sendingTurn = false;
@@ -802,6 +931,11 @@ document.querySelector("#models-toggle").addEventListener("click", (event) => {
   const menu = document.querySelector("#models-menu");
   setModelsOpen(menu.hidden);
 });
+document.querySelector("#modes-toggle").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = document.querySelector("#modes-menu");
+  setModesOpen(menu.hidden);
+});
 document.querySelector("#world-toggle").addEventListener("click", (event) => {
   event.stopPropagation();
   const menu = document.querySelector("#world-menu");
@@ -809,13 +943,44 @@ document.querySelector("#world-toggle").addEventListener("click", (event) => {
 });
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".models")) setModelsOpen(false);
+  if (!event.target.closest(".modes")) setModesOpen(false);
   if (!event.target.closest(".worlds-picker")) setWorldsOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!document.querySelector("#models-menu").hidden) setModelsOpen(false);
+  if (!document.querySelector("#modes-menu").hidden) setModesOpen(false);
   if (!document.querySelector("#world-menu").hidden) setWorldsOpen(false);
 });
+document.querySelector("#hero-close").addEventListener("click", () => document.querySelector("#hero-dialog").close());
+document.querySelector("#hero-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const error = document.querySelector("#hero-error");
+  error.textContent = "";
+  const payload = {
+    name: heroField("name").value.trim(),
+    appearance: heroField("appearance").value.trim(),
+    equipment: heroField("equipment").value.trim(),
+  };
+  for (const key of HERO_STATS) payload[key] = Number(heroField(key).value);
+  if (!payload.name) {
+    error.textContent = t("hero.required");
+    return;
+  }
+  try {
+    applySnapshot(await api("/api/hero", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }), "keep");
+    document.querySelector("#hero-dialog").close();
+  } catch (err) {
+    error.textContent = t("hero.required");
+  }
+});
+document.querySelector("#stat-close").addEventListener("click", () => resolveStats(false));
+document.querySelector("#stat-reject").addEventListener("click", () => resolveStats(false));
+document.querySelector("#stat-accept").addEventListener("click", () => resolveStats(true));
 
 document.querySelector("#act").addEventListener("click", async () => {
   if (document.body.classList.contains("busy")) {
@@ -1943,7 +2108,7 @@ function paintSettingsForm(preferredTab) {
     look.value = settingsCache.image_look || "none";
     look.addEventListener("change", () => { settingsCache.image_look = look.value; });
     lookLabel.append(look);
-    box.append(
+    const nodes = [
       heading(t("dialog.gen_params")),
       check(t("dialog.stream"), "stream_mode"),
       field(t("dialog.max_tokens"), "max_tokens", { type: "number", min: 1, step: 1 }),
@@ -1956,7 +2121,16 @@ function paintSettingsForm(preferredTab) {
       choice(t("dialog.memory_top_k"), "memory_top_k", ["3", "5", "7", "10"]),
       styleLabel,
       lookLabel,
-    );
+    ];
+    if ((settingsCache.play_mode || "sandbox") !== "adventure") {
+      nodes.push(
+        heading(t("dialog.section_sandbox_mechanics")),
+        check(t("dialog.sandbox_d20"), "sandbox_d20"),
+        check(t("dialog.sandbox_hero"), "sandbox_hero"),
+        check(t("dialog.sandbox_npc"), "sandbox_npc"),
+      );
+    }
+    box.append(...nodes);
     return box;
   }
   function promptFields() {

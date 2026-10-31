@@ -14,6 +14,10 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+html[data-mode="adventure"] {
+  --gold: #6fbf73;
+}
+
 * { box-sizing: border-box; }
 
 html {
@@ -51,18 +55,19 @@ body {
   padding: 8px 24px 0;
 }
 
-.models { position: relative; }
+.models, .modes { position: relative; }
 .models.open #models-toggle,
+.modes.open #modes-toggle,
 .worlds-picker.open #world-toggle { border-color: var(--gold); color: var(--gold); }
 
-#models-toggle {
+#models-toggle, #modes-toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   max-width: min(280px, 70vw);
 }
 
-#models-current {
+#models-current, #modes-current {
   color: var(--gold);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -181,7 +186,7 @@ h1 {
 }
 
 button:disabled { opacity: 0.45; cursor: default; }
-header button, nav button, #menu-toggle, #models-toggle, #world-toggle, .composer-actions button, dialog button, dialog input {
+header button, nav button, #menu-toggle, #models-toggle, #modes-toggle, #world-toggle, .composer-actions button, dialog button, dialog input {
   background: transparent;
   color: var(--ink);
   border: 1px solid var(--line);
@@ -334,7 +339,9 @@ dialog {
   padding: 16px 18px 20px;
 }
 
-#next-dialog { width: min(520px, 92vw); }
+#next-dialog, #hero-dialog, #stat-dialog { width: min(520px, 92vw); }
+.hero-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+#hero-dialog label span { display: block; }
 #next-hint { white-space: pre-line; font-size: 14px; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -442,6 +449,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
   }
   .topbar.open #menu-toggle,
   .models.open #models-toggle,
+  .modes.open #modes-toggle,
   .worlds-picker.open #world-toggle { border-color: var(--gold); color: var(--gold); }
   #topbar-body { display: none; }
   .topbar.open #topbar-body { display: block; }
@@ -456,7 +464,7 @@ dialog label { display: block; margin: 10px 0 4px; color: var(--muted); font-siz
     scroll-padding-inline: 12px;
     -webkit-overflow-scrolling: touch;
   }
-  nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #world-toggle { min-height: 44px; }
+  nav button, header button, .composer-actions button, dialog button, #menu-toggle, #models-toggle, #modes-toggle, #world-toggle { min-height: 44px; }
   nav button, #summary-count, #memory-count {
     flex: 0 0 auto;
     scroll-snap-align: start;
