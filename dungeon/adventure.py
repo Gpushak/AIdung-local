@@ -43,16 +43,23 @@ def accepted_dc(value):
 
 def roll_succeeds(roll, dc):
     """1 — провал, 20 — успех. Иначе успех, если результат не ниже сложности."""
+    return roll_outcome(roll, dc) in {"critical_success", "success"}
+
+
+def roll_outcome(roll, dc):
+    """Четыре исхода. Натуральные 1 и 20 важнее числа сложности."""
     try:
         rolled = int(roll)
         target = int(dc)
     except (TypeError, ValueError):
-        return False
-    if rolled == 1:
-        return False
+        return "failure"
     if rolled == 20:
-        return True
-    return rolled >= target
+        return "critical_success"
+    if rolled == 1:
+        return "critical_failure"
+    if rolled >= target:
+        return "success"
+    return "failure"
 
 
 def _flag(value):
@@ -104,6 +111,11 @@ def format_roll_fact(lang, name, dc, roll, success):
         roll=roll,
         result=t(lang, "check.success" if success else "check.fail"),
     )
+
+
+def format_roll_cue(lang, outcome):
+    """Как рассказывать этот бросок. В историю игрока не пишется."""
+    return t(lang, f"check.cue.{outcome}")
 
 
 def clamp_stat(value, default=10):

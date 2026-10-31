@@ -291,6 +291,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.sandbox_npc = bool(settings.get("sandbox_npc", False))
         self.hero = None
         self.pending_stats = None
+        self._roll_narration = ""
         mode = settings.get("bind_mode")
         self.bind_mode = mode if mode in ("local", "lan", "tailscale") else ("lan" if self.lan_access else "local")
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
@@ -432,12 +433,19 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             save_history(self.current_world_path, self.history)
         self.emit("history")
 
+    def roll_narration_cue(self):
+        cue = str(self._roll_narration or "")
+        self._roll_narration = ""
+        return cue
+
     def prepare_adventure_action(self, user_input="", direction_hint=None):
+        self._roll_narration = ""
         if not self.d20_enabled():
             return user_input, direction_hint
         try:
             return self._attach_roll(user_input, direction_hint)
         except Exception:
+            self._roll_narration = ""
             return user_input, direction_hint
 
     def _attach_roll(self, user_input, direction_hint):
@@ -447,6 +455,9 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             return user_input, direction_hint
         rolled = int(adventure_rules.roll_d20())
         success = adventure_rules.roll_succeeds(rolled, check["dc"])
+        self._roll_narration = adventure_rules.format_roll_cue(
+            self.language, adventure_rules.roll_outcome(rolled, check["dc"])
+        )
         fact = adventure_rules.format_roll_fact(self.language, check["name"], check["dc"], rolled, success)
         if direction_hint:
             updated = f"{direction_hint.rstrip()}\n{fact}"
