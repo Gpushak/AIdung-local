@@ -110,10 +110,14 @@ def ensure_introduction_in_history(world_path, history):
     return history
 
 
+# Каталог миров «Приключения». Лежит рядом с мирами песочницы и сам миром не является.
+ADVENTURE_DIR = "adventure"
+
+
 def get_world_list():
     if not BASE_DIR.exists():
         BASE_DIR.mkdir()
-    return [d.name for d in BASE_DIR.iterdir() if d.is_dir()]
+    return [d.name for d in BASE_DIR.iterdir() if d.is_dir() and d.name != ADVENTURE_DIR]
 
 
 LANGUAGE_FILE = "language.txt"
@@ -155,22 +159,36 @@ def read_world_language(world_path):
 
 
 def world_entries():
-    """Список миров с языком локализации: сначала русские, затем английские."""
+    """Список миров песочницы с языком: сначала русские, затем английские."""
+    return world_entries_in(BASE_DIR)
+
+
+def world_entries_in(root):
+    """Миры в одной папке режима. Каталог приключения в корне песочницы пропускается."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    skip_container = root.resolve() == Path(BASE_DIR).resolve()
     items = []
-    for name in get_world_list():
-        items.append({"name": name, "language": read_world_language(BASE_DIR / name)})
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if skip_container and entry.name == ADVENTURE_DIR:
+            continue
+        items.append({"name": entry.name, "language": read_world_language(entry)})
     items.sort(key=lambda item: ({"ru": 0, "en": 1}.get(item["language"], 2), item["name"].casefold()))
     return items
 
 
-def load_world_config(world_name):
+def load_world_config(world_name, root=None):
     """Читает файлы мира и историю.
 
     Возвращает (files_content, history, restored_from_backup). При повреждении
     истории без возможности восстановления бросает CorruptedDataError — вызывающий
     код обязан сообщить игроку, а не затихотно начать новую кампанию.
+    root — папка режима. Без неё мир ищется среди песочницы, как раньше.
     """
-    world_path = Path(BASE_DIR) / str(world_name)
+    world_path = Path(root or BASE_DIR) / str(world_name)
     files_content = {}
     for fname in WORLD_FILES:
         path = world_path / fname

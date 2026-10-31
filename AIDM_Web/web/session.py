@@ -8,6 +8,7 @@ import shutil
 import threading
 import zipfile
 
+import dungeon.adventure as adventure_rules
 from dungeon.ai_engine import ACTION, CARDS, AIEngineMixin
 from dungeon.session import SharedTurnMixin
 from dungeon.config import (
@@ -25,12 +26,12 @@ from dungeon.i18n import (
     DM_PREFIX,
     INTRO_PREFIX,
     PLAYER_PREFIX,
+    dm_text,
+    is_dm_msg,
     PROMPT_GROUPS,
     builtin_prompt,
     default_templates,
-    dm_text,
     intro_text,
-    is_dm_msg,
     is_intro_msg,
     is_player_msg,
     normalize_lang,
@@ -54,13 +55,13 @@ from dungeon.tokens import (
     set_model_token_scale,
 )
 from dungeon.storage import (
+    ADVENTURE_DIR,
     CorruptedDataError,
     atomic_write_text,
     clamp_summary_cursor,
     clamp_summary_fill_percent,
     ensure_introduction_in_history,
     format_introduction_history,
-    get_world_list,
     load_global_settings,
     load_world_config,
     normalize_api_presets,
@@ -69,7 +70,7 @@ from dungeon.storage import (
     save_summary_cursor,
     save_world_files,
     save_world_language,
-    world_entries,
+    world_entries_in,
 )
 
 
@@ -239,6 +240,13 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.summary_enabled = settings.get("summary_enabled", True)
         self.memory_enabled = settings.get("memory_enabled", True)
         self.lan_access = bool(settings.get("lan_access", True))
+        raw_mode = settings.get("play_mode")
+        self.play_mode = raw_mode if raw_mode in (adventure_rules.SANDBOX_MODE, adventure_rules.ADVENTURE_MODE) else adventure_rules.SANDBOX_MODE
+        self.sandbox_d20 = bool(settings.get("sandbox_d20", False))
+        self.sandbox_hero = bool(settings.get("sandbox_hero", False))
+        self.sandbox_npc = bool(settings.get("sandbox_npc", False))
+        self.hero = None
+        self.pending_stats = None
         mode = settings.get("bind_mode")
         self.bind_mode = mode if mode in ("local", "lan", "tailscale") else ("lan" if self.lan_access else "local")
         self.image_prompt_style = settings.get("image_prompt_style", DEFAULT_IMAGE_STYLE)
@@ -265,12 +273,198 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self._schedule_summary_after_turn = False
         self._schedule_memory_after_turn = False
         self._cancel_events = {}
-        worlds = get_world_list()
+        worlds = self.mode_world_entries()
         if worlds:
-            self.load_world(worlds[0])
+            self.load_world(worlds[0]["name"])
 
     def tr(self, key, **kwargs):
         return t(self.language, key, **kwargs)
+
+    def mode_root(self):
+        if self.play_mode == adventure_rules.ADVENTURE_MODE:
+            return BASE_DIR / ADVENTURE_DIR
+        return BASE_DIR
+
+    def mode_world_entries(self):
+        return world_entries_in(self.mode_root())
+
+    def _world_path(self, name):
+        cleaned = str(name or "").strip()
+        if not cleaned or any(ch in cleaned for ch in '\\/:*?"<>|') or cleaned in {".", ".."}:
+            raise ValueError("bad name")
+        if self.play_mode != adventure_rules.ADVENTURE_MODE and cleaned == ADVENTURE_DIR:
+            raise ValueError("bad name")
+        return self.mode_root() / cleaned
+
+    def d20_enabled(self):
+        return self.play_mode == adventure_rules.ADVENTURE_MODE or bool(self.sandbox_d20)
+
+    def hero_enabled(self):
+        return self.play_mode == adventure_rules.ADVENTURE_MODE or bool(self.sandbox_hero)
+
+    def npc_enabled(self):
+        return self.play_mode == adventure_rules.ADVENTURE_MODE or bool(self.sandbox_npc)
+
+    def hero_required_missing(self):
+        return bool(self.current_world_path and self.hero_enabled() and not adventure_rules.hero_is_ready(self.hero))
+
+    def _clear_open_world(self):
+        self.current_world_path = None
+        self.world_name = None
+        self.history = []
+        self.story_cards = {"cards": []}
+        self.memory_bank = {"last_indexed_turn": 0, "entries": []}
+        self.hero = None
+        self.pending_stats = None
+        self.covered_count = 0
+        self.last_sent_prompt = None
+        self.notices = []
+        self.update_context_indicator()
+        self.update_memory_label()
+        self.emit("history")
+
+    def set_play_mode(self, mode):
+        if self.is_busy():
+            raise RuntimeError("busy")
+        chosen = adventure_rules.ADVENTURE_MODE if mode == adventure_rules.ADVENTURE_MODE else adventure_rules.SANDBOX_MODE
+        if chosen != self.play_mode:
+            self.play_mode = chosen
+            self.save_settings()
+            worlds = self.mode_world_entries()
+            if worlds:
+                self.load_world(worlds[0]["name"])
+            else:
+                self._clear_open_world()
+        return self.state_view()
+
+    def _static_context_text(self, retrieval_query):
+        """Веб-обёртка: карточка героя всегда в промпте и не ищется среди story_cards."""
+        context = super()._static_context_text(retrieval_query)
+        if self.hero_enabled():
+            context += adventure_rules.format_hero_block(self.hero, self.language)
+        return context
+
+    def _ask_json(self, prompt):
+        payload = self._api_payload(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=500,
+            stream=True,
+        )
+        response = self._api_post(payload, stream=True, timeout=60)
+        response.raise_for_status()
+        text, cancelled = self._read_response(response, ACTION)
+        if cancelled:
+            return None
+        return adventure_rules.extract_json_object(text)
+
+    def _replace_staged_player_line(self, previous, updated):
+        if previous == updated:
+            return
+        line = f"{PLAYER_PREFIX} {updated}"
+        if previous and self.history and is_player_msg(self.history[-1]) and player_text(self.history[-1]) == previous:
+            self.history[-1] = line
+        elif not previous:
+            if not self.history or self.history[-1] != line:
+                self.history.append(line)
+        else:
+            return
+        if self.current_world_path:
+            save_history(self.current_world_path, self.history)
+        self.emit("history")
+
+    def prepare_adventure_action(self, user_input="", direction_hint=None):
+        if not self.d20_enabled():
+            return user_input, direction_hint
+        try:
+            return self._attach_roll(user_input, direction_hint)
+        except Exception:
+            return user_input, direction_hint
+
+    def _attach_roll(self, user_input, direction_hint):
+        action = (direction_hint or user_input or "").strip() or self.tr("prompt.continue")
+        check = adventure_rules.parse_check(self._ask_json(self.tr("prompt.check", action=action)))
+        if not check:
+            return user_input, direction_hint
+        rolled = int(adventure_rules.roll_d20())
+        success = adventure_rules.roll_succeeds(rolled, check["dc"])
+        fact = adventure_rules.format_roll_fact(self.language, check["name"], check["dc"], rolled, success)
+        if direction_hint:
+            updated = f"{direction_hint.rstrip()}\n{fact}"
+            self._replace_staged_player_line(direction_hint, updated)
+            return user_input, updated
+        base = user_input or ""
+        updated = f"{base.rstrip()}\n{fact}" if base.strip() else fact
+        self._replace_staged_player_line(base, updated)
+        return updated, direction_hint
+
+    def finish_adventure_action(self, user_input="", direction_hint=None):
+        if not self.hero_enabled() and not self.npc_enabled():
+            return
+        if not self.current_world_path or not self.history or not is_dm_msg(self.history[-1]):
+            return
+        try:
+            self._apply_followup(user_input, direction_hint)
+        except Exception:
+            return
+
+    def _apply_followup(self, user_input, direction_hint):
+        action = (direction_hint or user_input or "").strip() or self.tr("prompt.none")
+        hero_text = (
+            adventure_rules.hero_summary(self.hero, self.language)
+            if self.hero_enabled()
+            else self.tr("prompt.none")
+        )
+        prompt = self.tr(
+            "prompt.followup",
+            hero=hero_text,
+            action=action,
+            reply=dm_text(self.history[-1]),
+        )
+        data = adventure_rules.parse_followup(self._ask_json(prompt) or {})
+        if self.hero_enabled() and adventure_rules.hero_is_ready(self.hero):
+            changed = False
+            if data["equipment"] and data["equipment"] != str(self.hero.get("equipment") or ""):
+                self.hero["equipment"] = data["equipment"]
+                changed = True
+            if data["appearance"] and data["appearance"] != str(self.hero.get("appearance") or ""):
+                self.hero["appearance"] = data["appearance"]
+                changed = True
+            if changed:
+                adventure_rules.save_hero(self.current_world_path, self.hero)
+            queued = adventure_rules.changed_stats(self.hero, data["stats"])
+            self.pending_stats = (
+                {"stats": queued, "current": {key: self.hero.get(key, 10) for key in queued}}
+                if queued
+                else None
+            )
+        if self.npc_enabled():
+            updated, added = adventure_rules.cards_with_characters(self.story_cards, data["characters"])
+            if added:
+                save_story_cards(self.current_world_path, updated)
+                self.story_cards = updated
+        self.emit("history")
+
+    def save_hero_card(self, payload):
+        if not self.current_world_path:
+            raise RuntimeError("no world")
+        self.hero = adventure_rules.normalize_hero(payload)
+        adventure_rules.save_hero(self.current_world_path, self.hero)
+        self.pending_stats = None
+        self.emit("history")
+        return self.hero
+
+    def resolve_pending_stats(self, accept):
+        pending = self.pending_stats or {}
+        self.pending_stats = None
+        if accept and adventure_rules.hero_is_ready(self.hero):
+            for key, value in (pending.get("stats") or {}).items():
+                if key in adventure_rules.STAT_KEYS:
+                    self.hero[key] = adventure_rules.clamp_stat(value)
+            if self.current_world_path:
+                adventure_rules.save_hero(self.current_world_path, self.hero)
+        self.emit("history")
+        return self.state_view()
 
     def emit(self, kind, **data):
         self.revision += 1
@@ -481,7 +675,11 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             start = max(0, min(int(start), total))
         return {
             "world": self.world_name,
-            "worlds": world_entries(),
+            "worlds": self.mode_world_entries(),
+            "play_mode": self.play_mode,
+            "needs_hero": self.hero_required_missing(),
+            "hero": self.hero,
+            "pending_stats": self.pending_stats,
             "language": self.language,
             "history": self.history_rows(start, total),
             "history_from": start,
@@ -551,12 +749,15 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         }
 
     def load_world(self, world_name):
-        world_path = BASE_DIR / world_name
-        if not world_path.exists():
+        try:
+            world_path = self._world_path(world_name)
+        except ValueError as exc:
+            raise FileNotFoundError(world_name) from exc
+        if not world_path.is_dir():
             raise FileNotFoundError(world_name)
         previous_lang = self._count_language()
         try:
-            _files, loaded_history, restored = load_world_config(world_name)
+            _files, loaded_history, restored = load_world_config(world_name, self.mode_root())
         except CorruptedDataError as exc:
             self.add_system_message(
                 self.tr("dialog.corrupt_history", name=world_name, file=exc.path.name, detail=exc.detail)
@@ -572,6 +773,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self._load_summary_cursor(loaded_history)
         self.memory_bank = load_memory_bank(world_path)
         self.story_cards = load_story_cards(world_path)
+        self.hero = adventure_rules.load_hero(world_path)
+        self.pending_stats = None
         current_turns = count_completed_turns(self.history)
         self.turns_since_memory = current_turns - self.memory_bank.get("last_indexed_turn", 0)
         if restored:
@@ -663,6 +866,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                 "prompt_overrides": self.prompt_overrides,
                 "lan_access": self.lan_access,
                 "bind_mode": self.bind_mode,
+                "play_mode": self.play_mode,
+                "sandbox_d20": bool(self.sandbox_d20),
+                "sandbox_hero": bool(self.sandbox_hero),
+                "sandbox_npc": bool(self.sandbox_npc),
                 "token_scale": model_token_scale(),
                 "token_scale_model": self.model,
                 "token_scale_counter": counter_kind(),
@@ -711,6 +918,10 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "language": self.language,
             "lan_access": self.lan_access,
             "bind_mode": self.bind_mode,
+            "play_mode": self.play_mode,
+            "sandbox_d20": bool(self.sandbox_d20),
+            "sandbox_hero": bool(self.sandbox_hero),
+            "sandbox_npc": bool(self.sandbox_npc),
             "prompts": groups,
             "prompt_overrides": self.prompt_overrides,
         }
@@ -747,6 +958,12 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.summary_enabled = bool(payload.get("summary_enabled", self.summary_enabled))
         self.memory_enabled = bool(payload.get("memory_enabled", self.memory_enabled))
         self.lan_access = bool(payload.get("lan_access", self.lan_access))
+        if "sandbox_d20" in payload:
+            self.sandbox_d20 = bool(payload.get("sandbox_d20"))
+        if "sandbox_hero" in payload:
+            self.sandbox_hero = bool(payload.get("sandbox_hero"))
+        if "sandbox_npc" in payload:
+            self.sandbox_npc = bool(payload.get("sandbox_npc"))
         if not self.lan_access:
             self.bind_mode = "local"
         elif self.bind_mode == "local":
@@ -800,7 +1017,29 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
             "btn.make_move",
             "btn.menu",
             "btn.models",
+            "btn.modes",
+            "mode.sandbox",
+            "mode.adventure",
             "models.empty",
+            "dialog.section_sandbox_mechanics",
+            "dialog.sandbox_d20",
+            "dialog.sandbox_hero",
+            "dialog.sandbox_npc",
+            "hero.title",
+            "hero.name",
+            "hero.appearance",
+            "hero.equipment",
+            "hero.strength",
+            "hero.dexterity",
+            "hero.constitution",
+            "hero.intelligence",
+            "hero.wisdom",
+            "hero.charisma",
+            "hero.required",
+            "hero.confirm_title",
+            "hero.confirm_hint",
+            "hero.confirm",
+            "hero.reject",
             "btn.next",
             "btn.stop",
             "btn.undo",
@@ -944,7 +1183,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         self.emit("history")
 
     def submit_turn(self, text="", direction=""):
-        if self.is_busy() or not self.current_world_path:
+        if self.is_busy() or not self.current_world_path or self.hero_required_missing():
             return False
         if direction:
             direction = direction.strip()
@@ -989,7 +1228,7 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return ""
 
     def regenerate(self):
-        if self.is_busy() or not self.history or not self.current_world_path:
+        if self.is_busy() or not self.history or not self.current_world_path or self.hero_required_missing():
             return False
         last_player_input = self.rewind_last_reply()
         save_history(self.current_world_path, self.history)
@@ -1081,9 +1320,12 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         save_memory_bank(self.current_world_path, self.memory_bank)
 
     def export_world_bytes(self, name):
-        cleaned = clean_world_name(name)
-        world_path = (BASE_DIR / cleaned).resolve()
-        if BASE_DIR.resolve() not in world_path.parents or not world_path.is_dir():
+        try:
+            world_path = self._world_path(name).resolve()
+            cleaned = world_path.name
+        except ValueError as exc:
+            raise FileNotFoundError(name) from exc
+        if self.mode_root().resolve() not in world_path.parents or not world_path.is_dir():
             raise FileNotFoundError(cleaned)
         if self.world_name == cleaned:
             if self.is_busy():
@@ -1106,15 +1348,20 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
     def import_world_bytes(self, name, payload):
         if self.is_busy():
             raise RuntimeError("busy")
-        cleaned = clean_world_name(name)
-        world_path = BASE_DIR / cleaned
+        try:
+            world_path = self._world_path(name)
+        except ValueError as exc:
+            raise ValueError("bad archive") from exc
+        cleaned = world_path.name
         if world_path.exists():
             raise FileExistsError(cleaned)
         files = read_world_archive(payload)
-        world_path.mkdir(parents=False)
+        world_path.mkdir(parents=True)
         try:
             for filename, data in files.items():
                 (world_path / filename).write_bytes(data)
+            if self.play_mode == adventure_rules.ADVENTURE_MODE:
+                adventure_rules.write_mode_mark(world_path)
             self.load_world(cleaned)
         except Exception:
             if self.world_name != cleaned:
@@ -1123,10 +1370,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return cleaned
 
     def create_world(self, name, files=None, cards=None):
-        cleaned = (name or "").strip()
-        if not cleaned or any(ch in cleaned for ch in '\\/:*?"<>|') or cleaned in {".", ".."}:
-            raise ValueError("bad name")
-        world_path = BASE_DIR / cleaned
+        world_path = self._world_path(name)
+        cleaned = world_path.name
         if world_path.exists():
             raise FileExistsError(cleaned)
         content = dict(default_templates(self.language))
@@ -1136,6 +1381,8 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
                     content[fname] = str(files[fname])
         save_world_files(world_path, content)
         save_world_language(world_path, self.language)
+        if self.play_mode == adventure_rules.ADVENTURE_MODE:
+            adventure_rules.write_mode_mark(world_path)
         card_data = cards if isinstance(cards, dict) else default_story_cards(self.language)
         save_story_cards(world_path, card_data)
         intro = str(content.get(INTRODUCTION_FILE, "")).strip()
@@ -1145,21 +1392,19 @@ class GameSession(SharedTurnMixin, AIEngineMixin):
         return cleaned
 
     def delete_world(self, name):
-        world_path = BASE_DIR / name
+        try:
+            world_path = self._world_path(name)
+        except ValueError:
+            return False
         if not world_path.is_dir():
             return False
         shutil.rmtree(world_path)
-        if self.world_name == name:
-            self.current_world_path = None
-            self.world_name = None
-            self.history = []
-            self.story_cards = {"cards": []}
-            self.memory_bank = {"last_indexed_turn": 0, "entries": []}
-            worlds = get_world_list()
+        if self.world_name == world_path.name:
+            worlds = self.mode_world_entries()
             if worlds:
-                self.load_world(worlds[0])
+                self.load_world(worlds[0]["name"])
             else:
-                self.emit("history")
+                self._clear_open_world()
         return True
 
     def summarize(self):

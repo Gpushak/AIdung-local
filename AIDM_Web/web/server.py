@@ -189,8 +189,39 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
             raise HTTPException(404, "missing")
         return game().state_view()
 
+    @app.post("/api/mode")
+    def set_mode(payload: dict):
+        try:
+            return game().set_play_mode(payload.get("play_mode", ""))
+        except RuntimeError:
+            raise HTTPException(409, "busy")
+
+    @app.get("/api/hero")
+    def hero():
+        if not game().current_world_path:
+            raise HTTPException(409, "no world")
+        return {"hero": game().hero}
+
+    @app.put("/api/hero")
+    def save_hero(payload: dict):
+        try:
+            game().save_hero_card(payload)
+        except ValueError:
+            raise HTTPException(400, "hero")
+        except RuntimeError:
+            raise HTTPException(409, "no world")
+        return game().state_view()
+
+    @app.post("/api/hero/stats")
+    def hero_stats(payload: dict):
+        if not game().current_world_path:
+            raise HTTPException(409, "no world")
+        return game().resolve_pending_stats(bool(payload.get("accept")))
+
     @app.post("/api/turn")
     def turn(payload: dict):
+        if game().hero_required_missing():
+            raise HTTPException(409, "hero")
         started = game().submit_turn(payload.get("text", ""), payload.get("direction", ""))
         if not started:
             raise HTTPException(409, "busy or no world")
@@ -208,6 +239,8 @@ def create_app(session: GameSession | None = None, bind_host: str = "127.0.0.1")
 
     @app.post("/api/regenerate")
     def regenerate():
+        if game().hero_required_missing():
+            raise HTTPException(409, "hero")
         if not game().regenerate():
             raise HTTPException(409, "cannot regenerate")
         return {"ok": True}

@@ -33,7 +33,32 @@ TRANSLATIONS = {
         "btn.make_move": "Сделать ход",
         "btn.menu": "Меню",
         "btn.models": "Модели",
+        "btn.modes": "Режимы",
+        "mode.sandbox": "Песочница",
+        "mode.adventure": "Приключение",
         "models.empty": "Нет сохранённых конфигураций",
+        "dialog.section_sandbox_mechanics": "Механики приключения",
+        "dialog.sandbox_d20": "Проверка d20",
+        "dialog.sandbox_hero": "Карточка героя",
+        "dialog.sandbox_npc": "Автокарточки встреч",
+        "hero.title": "Карточка героя",
+        "hero.name": "Имя",
+        "hero.appearance": "Внешность",
+        "hero.equipment": "Снаряжение",
+        "hero.strength": "Сила",
+        "hero.dexterity": "Ловкость",
+        "hero.constitution": "Телосложение",
+        "hero.intelligence": "Интеллект",
+        "hero.wisdom": "Мудрость",
+        "hero.charisma": "Харизма",
+        "hero.required": "Заполните карточку героя, чтобы начать ход.",
+        "hero.confirm_title": "Изменить характеристики?",
+        "hero.confirm_hint": "Сцена предлагает изменить характеристики. Снаряжение и внешность уже записаны.",
+        "hero.confirm": "Применить",
+        "hero.reject": "Оставить как есть",
+        "check.success": "успех",
+        "check.fail": "провал",
+        "check.fact": "Проверка «{name}» (сложность {dc}): выпало {roll} — {result}.",
         "btn.create": "Создать",
         "btn.create_ok": "Создать",
         "btn.cancel": "Отмена",
@@ -277,6 +302,40 @@ TRANSLATIONS = {
         "hist.dm": "Мастер:",
         "hist.intro": "Вступление:",
         "prompt.continue": "(Продолжай повествование.)",
+        "prompt.check": """Нужна ли проверка d20 для этого действия игрока?
+Осмотр и спокойный разговор без риска — без проверки.
+Если проверка нужна, назови её и выбери сложность только из 10, 13, 16, 19.
+Ответь только JSON:
+{{"needed": false}}
+или
+{{"needed": true, "name": "название проверки", "dc": 13}}
+
+Действие:
+{action}""",
+        "prompt.followup": """По последнему ходу реши, изменились ли герой и список важных персонажей.
+Снаряжение и внешность указывай только если сцена реально их меняет. Иначе пустая строка.
+Характеристики предлагай только при реальном изменении. Иначе пустой объект.
+Ключи характеристик: strength, dexterity, constitution, intelligence, wisdom, charisma.
+В characters включай только персонажа с именем, который либо вернётся в сюжете (returns), либо участвует в конфликте (conflict).
+Безымянную стражу не включай.
+
+Герой:
+{hero}
+
+Действие игрока:
+{action}
+
+Ответ мастера:
+{reply}
+
+Только JSON:
+{{"equipment": "", "appearance": "", "stats": {{}}, "characters": [{{"name": "", "description": "", "triggers": [], "returns": false, "conflict": false}}]}}""",
+        "prompt.hero_block": """=== ГЕРОЙ ===
+Имя: {name}
+Внешность: {appearance}
+Снаряжение: {equipment}
+Сила: {strength}; Ловкость: {dexterity}; Телосложение: {constitution}; Интеллект: {intelligence}; Мудрость: {wisdom}; Харизма: {charisma}
+""",
         "prompt.direction": "Автор задаёт направление следующего хода:\n{hint}\n\nРеализуй это в повествовании органично, сохраняя стиль, контекст и правила мира. Не упоминай, что это «задание от автора» — просто развивай сюжет.",
         "prompt.no_reasoning": "ВАЖНО: Отвечай сразу, без размышлений, анализа или внутренних монологов. Не используй теги <think>, <thinking>, <reasoning> или подобные. Начинай ответ сразу с повествования.",
         "prompt.summary_header": "=== Сжатая хроника прошлых событий (summary.txt) ===\n{text}\n",
@@ -418,7 +477,32 @@ TRANSLATIONS = {
         "btn.make_move": "Take a turn",
         "btn.menu": "Menu",
         "btn.models": "Models",
+        "btn.modes": "Modes",
+        "mode.sandbox": "Sandbox",
+        "mode.adventure": "Adventure",
         "models.empty": "No saved configurations",
+        "dialog.section_sandbox_mechanics": "Adventure mechanics",
+        "dialog.sandbox_d20": "d20 check",
+        "dialog.sandbox_hero": "Hero card",
+        "dialog.sandbox_npc": "Automatic encounter cards",
+        "hero.title": "Hero card",
+        "hero.name": "Name",
+        "hero.appearance": "Appearance",
+        "hero.equipment": "Equipment",
+        "hero.strength": "Strength",
+        "hero.dexterity": "Dexterity",
+        "hero.constitution": "Constitution",
+        "hero.intelligence": "Intelligence",
+        "hero.wisdom": "Wisdom",
+        "hero.charisma": "Charisma",
+        "hero.required": "Fill in the hero card before taking a turn.",
+        "hero.confirm_title": "Change ability scores?",
+        "hero.confirm_hint": "The scene suggests new ability scores. Equipment and appearance are already saved.",
+        "hero.confirm": "Apply",
+        "hero.reject": "Keep current scores",
+        "check.success": "success",
+        "check.fail": "failure",
+        "check.fact": "Check \"{name}\" (difficulty {dc}): rolled {roll} — {result}.",
         "btn.create": "Create",
         "btn.create_ok": "Create",
         "btn.cancel": "Cancel",
@@ -662,6 +746,40 @@ TRANSLATIONS = {
         "hist.dm": "DM:",
         "hist.intro": "Introduction:",
         "prompt.continue": "(Continue the narrative.)",
+        "prompt.check": """Does this player action need a d20 check?
+Looking around and a conversation without risk need no check.
+If a check is needed, name it and choose a difficulty only from 10, 13, 16, 19.
+Reply with JSON only:
+{{"needed": false}}
+or
+{{"needed": true, "name": "check name", "dc": 13}}
+
+Action:
+{action}""",
+        "prompt.followup": """From the latest turn, decide whether the hero changed and which new characters matter.
+Set equipment and appearance only if the scene really changes them. Otherwise use an empty string.
+Propose ability scores only for a real change. Otherwise use an empty object.
+Ability keys: strength, dexterity, constitution, intelligence, wisdom, charisma.
+Include a character only when they have a name and will either return later (returns) or take part in a conflict (conflict).
+Skip unnamed guards.
+
+Hero:
+{hero}
+
+Player action:
+{action}
+
+Narration:
+{reply}
+
+JSON only:
+{{"equipment": "", "appearance": "", "stats": {{}}, "characters": [{{"name": "", "description": "", "triggers": [], "returns": false, "conflict": false}}]}}""",
+        "prompt.hero_block": """=== HERO ===
+Name: {name}
+Appearance: {appearance}
+Equipment: {equipment}
+Strength: {strength}; Dexterity: {dexterity}; Constitution: {constitution}; Intelligence: {intelligence}; Wisdom: {wisdom}; Charisma: {charisma}
+""",
         "prompt.direction": "The author sets the direction for the next turn:\n{hint}\n\nRealize this organically in the narration, keeping the style, context, and world rules. Do not mention that this is an author instruction — just advance the story.",
         "prompt.no_reasoning": "IMPORTANT: Respond immediately without reasoning, analysis, or internal monologue. Do not use , <thinking>, <reasoning>, or similar tags. Start your response directly with the narrative.",
         "prompt.summary_header": "=== Compressed chronicle of past events (summary.txt) ===\n{text}\n",

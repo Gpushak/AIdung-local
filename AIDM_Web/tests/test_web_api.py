@@ -452,7 +452,8 @@ def test_state_is_not_cached():
         assert "no-store" in cache
         page = client.get("/")
         assert "no-store" in page.headers.get("cache-control", "")
-        assert "app.js?v=10" in page.text
+        assert "app.js?v=11" in page.text
+        assert "style.css?v=9" in page.text
         assert 'rel="icon"' in page.text
         icon = client.get("/favicon.ico")
         assert icon.status_code == 200
@@ -983,6 +984,396 @@ def test_prompt_limits_and_scene_look():
     print("OK  лимиты промптов меняются, стиль дописывается в промпт сцены")
 
 
+def _wait_idle(client, timeout=4):
+    deadline = time.time() + timeout
+    state = client.get("/api/state").json()
+    while time.time() < deadline:
+        state = client.get("/api/state").json()
+        if not state["status"]["busy"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("ход не завершился")
+
+
+def _names(payload):
+    return [item["name"] if isinstance(item, dict) else item for item in payload["worlds"]]
+
+
+def test_modes_keep_worlds_in_separate_folders():
+    import io
+    import tempfile
+    import zipfile
+
+    from dungeon.i18n import t
+
+    with tempfile.TemporaryDirectory() as folder:
+        tmp = Path(folder)
+        _use_tmp(tmp)
+        client = TestClient(create_app())
+        strings = client.get("/api/strings").json()
+        assert strings["btn.modes"] == "Режимы"
+        assert strings["mode.sandbox"] == "Песочница"
+        assert strings["mode.adventure"] == "Приключение"
+        assert strings["dialog.sandbox_d20"] == "Проверка d20"
+        assert t("en", "mode.adventure") == "Adventure"
+        assert client.get("/api/state").json()["play_mode"] == "sandbox"
+
+        assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+        assert (tmp / "Camp").is_dir()
+        assert not (tmp / "Camp" / "mode.txt").exists()
+        (tmp / "Old").mkdir()
+        (tmp / "Old" / "introduction.txt").write_text("старый лагерь", encoding="utf-8")
+
+        switched = client.post("/api/mode", json={"play_mode": "adventure"})
+        assert switched.status_code == 200, switched.text
+        adventure = switched.json()
+        assert adventure["play_mode"] == "adventure"
+        assert adventure["world"] is None
+        assert _names(adventure) == []
+        assert json.loads((tmp / "settings.json").read_text(encoding="utf-8"))["play_mode"] == "adventure"
+
+        created = client.post("/api/worlds", json={"name": "Quest"})
+        assert created.status_code == 200, created.text
+        assert (tmp / "adventure" / "Quest" / "mode.txt").read_text(encoding="utf-8").strip() == "adventure"
+        assert not (tmp / "Quest").exists()
+        assert _names(client.get("/api/worlds").json()) == ["Quest"]
+        assert client.post("/api/worlds/open", json={"name": "Camp"}).status_code == 404
+        assert client.delete("/api/worlds/Camp").status_code == 404
+        assert (tmp / "Camp").is_dir()
+
+        exported = client.get("/api/worlds/Quest/export")
+        assert exported.status_code == 200, exported.text
+        assert client.delete("/api/worlds/Quest").status_code == 200
+        assert not (tmp / "adventure" / "Quest").exists()
+        brought = client.post(
+            "/api/worlds/import?name=Quest",
+            content=exported.content,
+            headers={"Content-Type": "application/zip"},
+        )
+        assert brought.status_code == 200, brought.text
+        assert (tmp / "adventure" / "Quest" / "mode.txt").read_text(encoding="utf-8").strip() == "adventure"
+        assert not (tmp / "Quest").exists()
+        with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+            assert "mode.txt" in archive.namelist()
+
+        sandbox = client.post("/api/mode", json={"play_mode": "sandbox"})
+        assert sandbox.status_code == 200, sandbox.text
+        assert _names(sandbox.json()) == ["Camp", "Old"]
+        assert "Quest" not in _names(sandbox.json())
+        assert client.post("/api/worlds/open", json={"name": "Quest"}).status_code == 404
+        assert client.post("/api/worlds", json={"name": "adventure"}).status_code == 400
+        assert client.get("/api/state").json()["world"] == "Camp"
+    print("OK  миры приключения лежат отдельно и не видны в песочнице")
+
+
+def test_d20_discards_unknown_difficulty_and_uses_a_known_roll():
+    import tempfile
+
+    import dungeon.adventure as adventure
+    from dungeon.tokens import set_model_token_scale
+
+    assert adventure.accepted_dc(15) is None
+    assert adventure.accepted_dc(12) is None
+    assert adventure.accepted_dc("13") == 13
+    assert adventure.accepted_dc(19) == 19
+    assert adventure.roll_succeeds(1, 10) is False
+    assert adventure.roll_succeeds(20, 19) is True
+    assert adventure.roll_succeeds(13, 13) is True
+    assert adventure.roll_succeeds(12, 13) is False
+
+    set_model_token_scale(0.8)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/mode", json={"play_mode": "adventure"}).status_code == 200
+            assert client.post("/api/worlds", json={"name": "Quest"}).status_code == 200
+            calls = []
+            rolls = {"n": 0, "value": 17}
+            checks = [
+                '{"needed": true, "name": "Ловкость", "dc": 15}',
+                '{"needed": true, "name": "Сила", "dc": 13}',
+            ]
+
+            def fake_roll():
+                rolls["n"] += 1
+                return rolls["value"]
+
+            adventure.roll_d20 = fake_roll
+
+            def post(payload, **_kwargs):
+                calls.append(payload)
+                return _Response()
+
+            def read(_response, _key, on_delta=None):
+                payload = calls[-1]
+                content = payload["messages"][-1]["content"]
+                if payload["messages"][0]["role"] == "system":
+                    if on_delta:
+                        on_delta("Готово")
+                    return "Готово", False
+                if "characters" in content:
+                    return '{"equipment":"","appearance":"","stats":{},"characters":[]}', False
+                return checks.pop(0), False
+
+            session._api_post = post
+            session._read_response = read
+            blocked = client.post("/api/turn", json={"text": "осмотреться"})
+            assert blocked.status_code == 409
+            assert blocked.json()["detail"] == "hero"
+            assert calls == []
+            assert not (tmp / "adventure" / "Quest" / "hero.json").exists()
+
+            saved = client.put(
+                "/api/hero",
+                json={"name": "Мира", "appearance": "плащ", "equipment": "лук", "strength": 10},
+            )
+            assert saved.status_code == 200, saved.text
+            assert client.post("/api/turn", json={"text": "осмотреться"}).status_code == 200
+            _wait_idle(client)
+            narration = [item for item in calls if item["messages"][0]["role"] == "system"]
+            assert narration[0]["messages"][-1]["content"] == "осмотреться"
+            assert rolls["n"] == 0
+            assert "Мира" in narration[0]["messages"][0]["content"]
+
+            assert client.post("/api/turn", json={"text": "толкнуть дверь"}).status_code == 200
+            state = _wait_idle(client)
+            narration = [item for item in calls if item["messages"][0]["role"] == "system"]
+            user = narration[-1]["messages"][-1]["content"]
+            assert "Сила" in user and "17" in user and "успех" in user
+            assert rolls["n"] == 1
+            assert any(row["kind"] == "player" and "17" in row["text"] for row in state["history"])
+            assert "Мира" in narration[-1]["messages"][0]["content"]
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  чужая сложность отбрасывается, известный d20 попадает в промпт")
+
+
+def test_named_foe_gets_a_card_and_unnamed_guard_does_not():
+    import tempfile
+
+    import dungeon.adventure as adventure
+    from dungeon.tokens import set_model_token_scale
+
+    set_model_token_scale(0.8)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            assert client.post("/api/mode", json={"play_mode": "adventure"}).status_code == 200
+            assert client.post("/api/worlds", json={"name": "Quest"}).status_code == 200
+            assert client.put("/api/hero", json={"name": "Мира", "strength": 10}).status_code == 200
+            follow = json.dumps(
+                {
+                    "equipment": "сабля",
+                    "appearance": "",
+                    "stats": {"strength": 16},
+                    "characters": [
+                        {
+                            "name": "Арион",
+                            "description": "уже есть",
+                            "triggers": ["арион"],
+                            "returns": True,
+                            "conflict": True,
+                        },
+                        {
+                            "name": "Капитан Рен",
+                            "description": "Враг с саблей.",
+                            "triggers": ["рен", "капитан"],
+                            "returns": False,
+                            "conflict": True,
+                        },
+                        {
+                            "name": "",
+                            "description": "безымянная стража у ворот",
+                            "triggers": ["стража"],
+                            "returns": True,
+                            "conflict": True,
+                        },
+                        {
+                            "name": "стражник",
+                            "description": "просто стоит",
+                            "triggers": ["стражник"],
+                            "returns": False,
+                            "conflict": False,
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+            def post(payload, **_kwargs):
+                session._last_payload = payload
+                return _Response()
+
+            def read(_response, _key, on_delta=None):
+                content = session._last_payload["messages"][-1]["content"]
+                if session._last_payload["messages"][0]["role"] == "system":
+                    if on_delta:
+                        on_delta("Сталь звенит")
+                    return "Сталь звенит", False
+                if "characters" in content:
+                    return follow, False
+                return '{"needed": false}', False
+
+            adventure.roll_d20 = lambda: 11
+            session._api_post = post
+            session._read_response = read
+            assert client.post("/api/turn", json={"text": "атаковать капитана"}).status_code == 200
+            _wait_idle(client)
+            cards = client.get("/api/cards").json()["cards"]
+            titles = [card["title"] for card in cards]
+            assert titles.count("Арион") == 1
+            assert "Капитан Рен" in titles
+            assert "стражник" not in titles
+            assert all(str(card.get("title") or "").strip() for card in cards)
+            foe = next(card for card in cards if card["title"] == "Капитан Рен")
+            assert {"id", "title", "description", "triggers"} <= set(foe)
+            assert "рен" in foe["triggers"]
+            hero = json.loads((tmp / "adventure" / "Quest" / "hero.json").read_text(encoding="utf-8"))
+            assert hero["equipment"] == "сабля"
+            assert hero["strength"] == 10
+            pending = client.get("/api/state").json()["pending_stats"]
+            assert pending["stats"]["strength"] == 16
+            accepted = client.post("/api/hero/stats", json={"accept": True})
+            assert accepted.status_code == 200, accepted.text
+            assert accepted.json()["hero"]["strength"] == 16
+            assert accepted.json()["pending_stats"] is None
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  именной враг получает карточку, безымянная стража нет, характеристики ждут подтверждения")
+
+
+def test_sandbox_flags_enable_mechanics_without_moving_worlds():
+    import tempfile
+
+    import dungeon.adventure as adventure
+    from dungeon.tokens import set_model_token_scale
+
+    set_model_token_scale(0.8)
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            tmp = Path(folder)
+            _use_tmp(tmp)
+            app = create_app()
+            session = app.state.session
+            client = TestClient(app)
+            opened = client.get("/api/settings").json()
+            assert opened["sandbox_d20"] is False
+            assert opened["sandbox_hero"] is False
+            assert opened["sandbox_npc"] is False
+            assert client.post("/api/worlds", json={"name": "Camp"}).status_code == 200
+            assert client.post("/api/mode", json={"play_mode": "adventure"}).status_code == 200
+            assert client.post("/api/worlds", json={"name": "Quest"}).status_code == 200
+            assert client.post("/api/mode", json={"play_mode": "sandbox"}).status_code == 200
+            assert _names(client.get("/api/worlds").json()) == ["Camp"]
+
+            saved = client.put(
+                "/api/settings",
+                json={"sandbox_d20": True, "sandbox_hero": True, "sandbox_npc": True},
+            )
+            assert saved.status_code == 200, saved.text
+            body = saved.json()
+            assert body["sandbox_d20"] is True
+            assert body["sandbox_hero"] is True
+            assert body["sandbox_npc"] is True
+            assert body["play_mode"] == "sandbox"
+            assert _names(client.get("/api/worlds").json()) == ["Camp"]
+            stored = json.loads((tmp / "settings.json").read_text(encoding="utf-8"))
+            assert stored["sandbox_d20"] is True
+            assert stored["sandbox_hero"] is True
+            assert stored["sandbox_npc"] is True
+            assert (tmp / "Quest").exists() is False
+            assert (tmp / "adventure" / "Quest").is_dir()
+
+            calls = []
+
+            def post(payload, **_kwargs):
+                calls.append(payload)
+                return _Response()
+
+            def read(_response, _key, on_delta=None):
+                content = calls[-1]["messages"][-1]["content"]
+                if calls[-1]["messages"][0]["role"] == "system":
+                    if on_delta:
+                        on_delta("Тишина")
+                    return "Тишина", False
+                if "characters" in content:
+                    return json.dumps(
+                        {
+                            "equipment": "",
+                            "appearance": "",
+                            "stats": {},
+                            "characters": [
+                                {
+                                    "name": "Смотритель",
+                                    "description": "Вернётся к воротам.",
+                                    "triggers": ["смотритель"],
+                                    "returns": True,
+                                    "conflict": False,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ), False
+                return '{"needed": true, "name": "Восприятие", "dc": 10}', False
+
+            adventure.roll_d20 = lambda: 14
+            set_model_token_scale(0.8)
+            session._api_post = post
+            session._read_response = read
+            blocked = client.post("/api/turn", json={"text": "прислушаться"})
+            assert blocked.status_code == 409
+            assert blocked.json()["detail"] == "hero"
+            assert calls == []
+
+            assert client.put(
+                "/api/settings",
+                json={"sandbox_hero": False, "sandbox_npc": False},
+            ).status_code == 200
+            assert client.post("/api/turn", json={"text": "прислушаться"}).status_code == 200
+            _wait_idle(client)
+            kinds = [
+                "narration" if item["messages"][0]["role"] == "system" else "side"
+                for item in calls
+            ]
+            assert kinds == ["side", "narration"]
+            assert "14" in calls[1]["messages"][-1]["content"]
+            assert "Смотритель" not in [card["title"] for card in client.get("/api/cards").json()["cards"]]
+
+            calls.clear()
+            assert client.put(
+                "/api/settings",
+                json={"sandbox_d20": False, "sandbox_hero": True, "sandbox_npc": True},
+            ).status_code == 200
+            assert client.put("/api/hero", json={"name": "Мира"}).status_code == 200
+            assert client.post("/api/turn", json={"text": "осмотреться"}).status_code == 200
+            _wait_idle(client)
+            titles = [card["title"] for card in client.get("/api/cards").json()["cards"]]
+            assert "Смотритель" in titles
+            assert _names(client.get("/api/worlds").json()) == ["Camp"]
+
+            calls.clear()
+            assert client.put(
+                "/api/settings",
+                json={"sandbox_d20": False, "sandbox_hero": False, "sandbox_npc": False},
+            ).status_code == 200
+            set_model_token_scale(0.8)
+            assert client.post("/api/turn", json={"text": "ждать"}).status_code == 200
+            _wait_idle(client)
+            assert len(calls) == 1
+            assert calls[0]["messages"][0]["role"] == "system"
+    finally:
+        set_model_token_scale(1.0)
+    print("OK  три флага песочницы включают те же механики и не меняют список миров")
+
+
 if __name__ == "__main__":
     test_file_save_and_summary_threshold()
     test_history_opens_on_the_tail()
@@ -1003,4 +1394,8 @@ if __name__ == "__main__":
     test_finished_reply_is_settled_before_processing_ends()
     test_world_language_marks_and_english_token_scale()
     test_prompt_limits_and_scene_look()
+    test_modes_keep_worlds_in_separate_folders()
+    test_d20_discards_unknown_difficulty_and_uses_a_known_roll()
+    test_named_foe_gets_a_card_and_unnamed_guard_does_not()
+    test_sandbox_flags_enable_mechanics_without_moving_worlds()
     print("ALL WEB TESTS PASSED")
